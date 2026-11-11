@@ -282,6 +282,7 @@ LOCAL_ACCESS_TOOLS = {
     "mac_click",
     "mac_frontmost",
     "mac_list_apps",
+    "mac_move_mouse",
     "mac_open_app",
     "mac_press_keys",
     "mac_quit_app",

@@ -64,6 +64,8 @@ TOOL_RISK: Dict[str, str] = {
     "mac_search": RISK_SAFE,
     "mac_open_url": RISK_SAFE,
     "mac_screenshot_describe": RISK_SAFE,
+    # Moving the pointer alone changes nothing, so it runs without asking.
+    "mac_move_mouse": RISK_SAFE,
     "mac_type_text": RISK_RISKY,
     "mac_press_keys": RISK_RISKY,
     "mac_click": RISK_RISKY,
@@ -515,6 +517,37 @@ class QuartzEvents:
             ctypes.c_int64,
         ]
         cg.CFRelease.argtypes = [ctypes.c_void_p]
+        cg.CGEventCreate.restype = ctypes.c_void_p
+        cg.CGEventCreate.argtypes = [ctypes.c_void_p]
+        cg.CGEventGetLocation.restype = _CGPoint
+        cg.CGEventGetLocation.argtypes = [ctypes.c_void_p]
+
+    def position(self) -> Tuple[float, float]:
+        """Where the pointer is now (screen points)."""
+        ev = self._cg.CGEventCreate(None)
+        if not ev:
+            return (0.0, 0.0)
+        try:
+            pt = self._cg.CGEventGetLocation(ev)
+            return (pt.x, pt.y)
+        finally:
+            self._cg.CFRelease(ev)
+
+    def glide(self, x: float, y: float, duration: float = 0.45) -> None:
+        """Move the pointer to (x, y) along a smooth, visible path, so the
+        user can watch where Jarvis is about to act instead of it teleporting."""
+        sx, sy = self.position()
+        dist = ((x - sx) ** 2 + (y - sy) ** 2) ** 0.5
+        if dist < 2:
+            self.move(x, y)
+            return
+        steps = max(8, min(45, int(dist / 18)))
+        pause = max(0.004, duration / steps)
+        for i in range(1, steps + 1):
+            t = i / steps
+            ease = t * t * (3 - 2 * t)  # smoothstep: speed up, then settle
+            self.move(sx + (x - sx) * ease, sy + (y - sy) * ease)
+            time.sleep(pause)
 
     def _post(self, ev: int) -> None:
         if not ev:
@@ -529,7 +562,7 @@ class QuartzEvents:
 
     def click(self, x: float, y: float, count: int = 1) -> None:
         pt = _CGPoint(x, y)
-        self.move(x, y)
+        self.glide(x, y)
         for n in range(1, count + 1):
             for etype in (self._LEFT_DOWN, self._LEFT_UP):
                 ev = self._cg.CGEventCreateMouseEvent(None, etype, pt, 0)
@@ -1570,6 +1603,34 @@ _CLICK_ELEMENT_SCRIPT = [
 ]
 
 
+# Same search as above, but report the element's centre instead of pressing
+# it, so the pointer can glide there and click visibly.
+_LOCATE_ELEMENT_SCRIPT = [
+    "on run argv",
+    "set appName to item 1 of argv",
+    "set target to item 2 of argv",
+    'tell application "System Events"',
+    "tell process appName",
+    "set frontmost to true",
+    "set els to entire contents of front window",
+    "repeat with e in els",
+    "try",
+    "if (name of e as text) is target or (description of e as text) is target then",
+    "set {px, py} to position of e",
+    "set {sw, sh} to size of e",
+    "set cx to (px + sw / 2) as integer",
+    "set cy to (py + sh / 2) as integer",
+    'return (cx as text) & "," & (cy as text)',
+    "end if",
+    "end try",
+    "end repeat",
+    "end tell",
+    "end tell",
+    'return "notfound"',
+    "end run",
+]
+
+
 @ToolRegistry.register("mac_click")
 class MacClickTool(_MacTool):
     """Click at screen coordinates or on a named button/element."""
@@ -1627,6 +1688,17 @@ class MacClickTool(_MacTool):
 
     def _run(self, clean: Dict[str, Any]) -> ToolResult:
         if "element" in clean:
+            # Find it, glide the pointer over and click for real, so the user
+            # sees what is happening. Fall back to pressing it via
+            # Accessibility when it has no usable on-screen position.
+            ok, out = self.ctl.osascript(
+                _LOCATE_ELEMENT_SCRIPT, [clean["app"], clean["element"]], timeout=30.0
+            )
+            if ok and re.fullmatch(r"-?\d+,-?\d+", out.strip() or ""):
+                cx, cy = (int(v) for v in out.strip().split(","))
+                if cx >= 0 and cy >= 0:
+                    self.ctl.quartz().click(cx, cy, 2 if clean["double"] else 1)
+                    return self._ok(f"Clicked '{clean['element']}' in {clean['app']}.")
             ok, out = self.ctl.osascript(
                 _CLICK_ELEMENT_SCRIPT, [clean["app"], clean["element"]], timeout=30.0
             )
@@ -1640,6 +1712,33 @@ class MacClickTool(_MacTool):
             return self._ok(f"Clicked '{clean['element']}' in {clean['app']}.")
         self.ctl.quartz().click(clean["x"], clean["y"], 2 if clean["double"] else 1)
         return self._ok(f"Clicked at ({clean['x']}, {clean['y']}).")
+
+
+@ToolRegistry.register("mac_move_mouse")
+class MacMoveMouseTool(_MacTool):
+    """Glide the mouse pointer to a screen position (no click)."""
+
+    tool_id = "mac_move_mouse"
+    _needs_accessibility = True
+
+    @property
+    def spec(self) -> ToolSpec:
+        return self._spec(
+            "Move the mouse pointer smoothly to x/y screen coordinates (in "
+            "points) without clicking -- e.g. to point at something or show "
+            "the user where you are looking.",
+            {"x": {"type": "integer"}, "y": {"type": "integer"}},
+            ["x", "y"],
+        )
+
+    def _prepare(self, params: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        x = _bounded_int(params.get("x"), 0, 20000, "x")
+        y = _bounded_int(params.get("y"), 0, 20000, "y")
+        return f"Jarvis wants to move the pointer to ({x}, {y}).", {"x": x, "y": y}
+
+    def _run(self, clean: Dict[str, Any]) -> ToolResult:
+        self.ctl.quartz().glide(clean["x"], clean["y"])
+        return self._ok(f"Moved the pointer to ({clean['x']}, {clean['y']}).")
 
 
 @ToolRegistry.register("mac_scroll")

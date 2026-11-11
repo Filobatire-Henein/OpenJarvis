@@ -261,6 +261,7 @@ DEFAULT_TOOL_CAPABILITIES: Dict[str, List[str]] = {
     "mac_click": [Capability.SYSTEM_ADMIN],
     "mac_frontmost": [Capability.FILE_READ],
     "mac_list_apps": [Capability.FILE_READ],
+    "mac_move_mouse": [Capability.SYSTEM_ADMIN],
     "mac_open_app": [Capability.SYSTEM_ADMIN],
     "mac_open_url": [Capability.NETWORK_FETCH],
     "mac_press_keys": [Capability.SYSTEM_ADMIN],

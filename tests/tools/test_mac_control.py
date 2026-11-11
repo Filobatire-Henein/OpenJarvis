@@ -165,6 +165,7 @@ def test_risk_classification():
         "mac_search",
         "mac_open_url",
         "mac_screenshot_describe",
+        "mac_move_mouse",
     }
     risky = {
         "mac_type_text",
@@ -848,3 +849,24 @@ def test_executor_records_untrusted_reads(tmp_path):
         ToolCall(id="1", name="remote_reader", arguments="{}")
     )
     assert "remote_reader" in untrusted_context.recent_untrusted_sources()
+
+
+def test_glide_moves_in_small_steps_and_lands_on_target(monkeypatch):
+    """The pointer travels visibly (many small moves) and ends exactly there."""
+    q = mc.QuartzEvents.__new__(mc.QuartzEvents)
+    moves = []
+    q.position = lambda: (0.0, 0.0)
+    q.move = lambda x, y: moves.append((x, y))
+    monkeypatch.setattr(mc.time, "sleep", lambda s: None)
+    q.glide(400, 300)
+    assert len(moves) >= 8
+    assert moves[-1] == (400, 300)
+    xs = [m[0] for m in moves]
+    assert xs == sorted(xs)  # never jumps backwards
+
+
+def test_move_mouse_is_safe_and_bounded():
+    assert mc.risk_of("mac_move_mouse") == mc.RISK_SAFE
+    tool = mc.MacMoveMouseTool.__new__(mc.MacMoveMouseTool)
+    with pytest.raises(ValueError):
+        tool._prepare({"x": -5, "y": 10})
