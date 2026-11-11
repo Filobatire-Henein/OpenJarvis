@@ -614,6 +614,93 @@ def _load_settings() -> Tuple[MacControlConfig, str, str]:
     return cfg, host, model
 
 
+# Names the Jarvis desktop app shows up as (process / window owner).
+SELF_APP_NAMES = {"jarvis", "openjarvis", "openjarvis-desktop", "openjarvis desktop"}
+
+
+def is_self_app(name: str) -> bool:
+    return (name or "").strip().lower() in SELF_APP_NAMES
+
+
+def list_onscreen_windows() -> List[Dict[str, Any]]:
+    """Normal on-screen windows, front to back: owner, title, id.
+
+    Reads the window server (CGWindowListCopyWindowInfo). Titles need Screen
+    Recording; without it they are empty but owners and order still work.
+    """
+    if sys.platform != "darwin":
+        return []
+    try:
+        cf = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+        )
+        cg = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+        )
+    except OSError:
+        return []
+    vp = ctypes.c_void_p
+    cg.CGWindowListCopyWindowInfo.restype = vp
+    cg.CGWindowListCopyWindowInfo.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+    cf.CFArrayGetCount.restype = ctypes.c_long
+    cf.CFArrayGetCount.argtypes = [vp]
+    cf.CFArrayGetValueAtIndex.restype = vp
+    cf.CFArrayGetValueAtIndex.argtypes = [vp, ctypes.c_long]
+    cf.CFDictionaryGetValue.restype = vp
+    cf.CFDictionaryGetValue.argtypes = [vp, vp]
+    cf.CFStringCreateWithCString.restype = vp
+    cf.CFStringCreateWithCString.argtypes = [vp, ctypes.c_char_p, ctypes.c_uint32]
+    cf.CFStringGetCString.restype = ctypes.c_bool
+    cf.CFStringGetCString.argtypes = [vp, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+    cf.CFNumberGetValue.restype = ctypes.c_bool
+    cf.CFNumberGetValue.argtypes = [vp, ctypes.c_int, vp]
+    cf.CFRelease.argtypes = [vp]
+    utf8 = 0x08000100
+    keys = {
+        k: cf.CFStringCreateWithCString(None, k.encode(), utf8)
+        for k in ("kCGWindowOwnerName", "kCGWindowName", "kCGWindowLayer", "kCGWindowNumber")
+    }
+
+    def text(ref: Any) -> str:
+        if not ref:
+            return ""
+        buf = ctypes.create_string_buffer(1024)
+        return buf.value.decode("utf-8", "replace") if cf.CFStringGetCString(ref, buf, 1024, utf8) else ""
+
+    def number(ref: Any) -> int:
+        if not ref:
+            return -1
+        out = ctypes.c_int64(0)
+        cf.CFNumberGetValue(ref, 4, ctypes.byref(out))  # kCFNumberSInt64Type
+        return int(out.value)
+
+    windows: List[Dict[str, Any]] = []
+    arr = cg.CGWindowListCopyWindowInfo(1 | 16, 0)  # on screen, no desktop
+    try:
+        if not arr:
+            return []
+        for i in range(cf.CFArrayGetCount(arr)):
+            d = cf.CFArrayGetValueAtIndex(arr, i)
+            if number(cf.CFDictionaryGetValue(d, keys["kCGWindowLayer"])) != 0:
+                continue
+            owner = text(cf.CFDictionaryGetValue(d, keys["kCGWindowOwnerName"]))
+            if not owner:
+                continue
+            windows.append(
+                {
+                    "owner": owner,
+                    "title": text(cf.CFDictionaryGetValue(d, keys["kCGWindowName"])),
+                    "id": number(cf.CFDictionaryGetValue(d, keys["kCGWindowNumber"])),
+                }
+            )
+    finally:
+        if arr:
+            cf.CFRelease(arr)
+        for ref in keys.values():
+            cf.CFRelease(ref)
+    return windows
+
+
 class MacController:
     """Process-wide gatekeeper shared by all mac_* tools."""
 
@@ -638,7 +725,9 @@ class MacController:
         installed_apps: Optional[Callable[[], Dict[str, Tuple[str, str]]]] = None,
         http_client: Any = None,
         cache_ttl_s: float = 5.0,
+        window_lister: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     ) -> None:
+        self.window_lister = window_lister or list_onscreen_windows
         self._settings_loader = settings_loader or _load_settings
         self.runner: Runner = runner or _default_runner
         self._store = store
@@ -891,6 +980,26 @@ class MacController:
             return "", ""
         name, _, title = out.partition("\n")
         return name.strip(), title.strip()
+
+    def app_behind_me(self) -> Tuple[str, str]:
+        """The app Filo is actually using: the front-most window that isn't Jarvis."""
+        try:
+            for w in self.window_lister():
+                if not is_self_app(w.get("owner", "")):
+                    return w["owner"], w.get("title", "")
+        except Exception:
+            pass
+        return "", ""
+
+    def window_of(self, app: str) -> Optional[int]:
+        """Window-server id of *app*'s front-most on-screen window."""
+        try:
+            for w in self.window_lister():
+                if w.get("owner", "").lower() == (app or "").lower() and w.get("id", -1) > 0:
+                    return int(w["id"])
+        except Exception:
+            pass
+        return None
 
     def running_apps(self) -> List[str]:
         ok, out = self.osascript(
@@ -1169,10 +1278,29 @@ class MacFrontmostTool(_MacTool):
         if not ok:
             return self._fail(out)
         name, _, title = out.partition("\n")
-        title = title.strip()
-        msg = f"Frontmost app: {name.strip()}"
+        name, title = name.strip(), title.strip()
+        if is_self_app(name):
+            behind, behind_title = self.ctl.app_behind_me()
+            if behind:
+                msg = (
+                    f"Filo is using: {behind}"
+                    + (f" — window: {behind_title}" if behind_title else "")
+                    + "\n(Jarvis's own chat window is on top only because Filo is "
+                    "talking to you. Questions about what is open or on screen mean "
+                    f"{behind}. Don't offer to switch apps — look at it now: "
+                    "mac_browser_tabs for a browser, or mac_screenshot_describe "
+                    f"with app='{behind}'.)"
+                )
+                return self._ok(msg, app=behind, title=behind_title, jarvis_on_top=True)
+            return self._ok(
+                "Only Jarvis's chat window is on screen; no other app window is visible.",
+                app=name,
+                title=title,
+                jarvis_on_top=True,
+            )
+        msg = f"Frontmost app: {name}"
         msg += f"\nWindow title: {title}" if title else "\nWindow title: (unavailable)"
-        return self._ok(msg, app=name.strip(), title=title)
+        return self._ok(msg, app=name, title=title)
 
 
 # Fixed AppleScript per supported browser (the name is chosen from this table,
@@ -1516,16 +1644,30 @@ class MacScreenshotDescribeTool(_MacTool):
         if supports is False:
             return self._fallback(f"The local model '{model}' cannot read images.")
 
-        if clean.get("path"):
+        front_app, front_title = self.ctl.frontmost()
+        target = clean.get("app")
+        if not target and is_self_app(front_app):
+            # Jarvis is on top because Filo is chatting: look at what's behind.
+            target, _ = self.ctl.app_behind_me()
+        window_id = self.ctl.window_of(target) if target else None
+        if target and window_id is None and clean.get("path"):
             self.ctl.runner(["open", "-a", clean["path"]], 15.0)
             self.ctl._sleep(self.SETTLE_S)
-        front_app, front_title = self.ctl.frontmost()
+            window_id = self.ctl.window_of(target)
+        if target:
+            front_app, front_title = target, ""
+            for w in self.ctl.window_lister() if window_id else []:
+                if w.get("id") == window_id:
+                    front_title = w.get("title", "")
 
         tmpdir = tempfile.mkdtemp(prefix="jarvis-shot-")
         os.chmod(tmpdir, 0o700)
         shot = os.path.join(tmpdir, "screen.jpg")
         try:
-            proc = self.ctl.runner(["screencapture", "-x", "-t", "jpg", shot], 20.0)
+            cmd = ["screencapture", "-x", "-o", "-t", "jpg"]
+            if window_id:
+                cmd += ["-l", str(window_id)]
+            proc = self.ctl.runner(cmd + [shot], 20.0)
             if proc.returncode != 0 or not os.path.exists(shot):
                 err = (proc.stderr or "").lower()
                 if (
@@ -1550,7 +1692,7 @@ class MacScreenshotDescribeTool(_MacTool):
                     "role": "user",
                     "content": (
                         "This is a screenshot of the user's Mac screen, taken "
-                        "just now. The app in front is "
+                        "just now, showing "
                         + (front_app or "unknown")
                         + (f" (window: {front_title})" if front_title else "")
                         + ". Describe only what is visible in THIS image. "

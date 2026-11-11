@@ -101,6 +101,7 @@ def make_controller(
     sleep=None,
     ax: Optional[bool] = True,
     screen: Optional[bool] = True,
+    windows: Optional[list] = None,
     **cfg_overrides: Any,
 ) -> mc.MacController:
     cfg = MacControlConfig(enabled=enabled, **cfg_overrides)
@@ -119,6 +120,7 @@ def make_controller(
         ax_checker=lambda: ax,
         screen_checker=lambda: screen,
         installed_apps=lambda: dict(APPS),
+        window_lister=lambda: list(windows or []),
         **kwargs,
     )
     ctl.POLL_INTERVAL_S = 0.01
@@ -265,7 +267,12 @@ def test_kill_switch_while_waiting_denies(tmp_path):
     t = threading.Thread(target=lambda: out.update(r=tool.execute(text="hi")))
     t.start()
     deadline = time.time() + 5
-    while not ctl.store.list_pending() and time.time() < deadline:
+
+    def pending():
+        with ctl._store_lock:  # same connection as the waiting thread
+            return ctl.store.list_pending()
+
+    while not pending() and time.time() < deadline:
         time.sleep(0.01)
     assert ctl.stop() == 1
     t.join(5)
@@ -921,3 +928,47 @@ def test_screenshot_brings_app_forward(tmp_path, monkeypatch):
     action, clean = tool._prepare({"question": "what tab?", "app": "chrome"})
     assert clean["app"] == "Google Chrome"
     assert "bring Google Chrome forward" in action
+
+
+# ---------------------------------------------------------------------------
+# Jarvis's own window is on top while Filo chats: look past it
+# ---------------------------------------------------------------------------
+
+BEHIND = [
+    {"owner": "Jarvis", "title": "Jarvis", "id": 10},
+    {"owner": "Google Chrome", "title": "YouTube", "id": 42},
+    {"owner": "Finder", "title": "Downloads", "id": 7},
+]
+
+
+def test_frontmost_looks_past_jarvis(tmp_path):
+    ctl = make_controller(tmp_path, runner=FakeRunner(front="Jarvis\nJarvis"), windows=BEHIND)
+    result = mc.MacFrontmostTool(ctl).execute()
+    assert result.success
+    assert result.content.startswith("Filo is using: Google Chrome — window: YouTube")
+    assert "Don't offer to switch" in result.content
+
+
+def test_frontmost_other_app_unchanged(tmp_path):
+    ctl = make_controller(tmp_path, runner=FakeRunner(front="Notes\nList"), windows=BEHIND)
+    assert "Frontmost app: Notes" in mc.MacFrontmostTool(ctl).execute().content
+
+
+def test_window_of_and_app_behind(tmp_path):
+    ctl = make_controller(tmp_path, windows=BEHIND)
+    assert ctl.app_behind_me() == ("Google Chrome", "YouTube")
+    assert ctl.window_of("google chrome") == 42
+    assert ctl.window_of("Safari") is None
+    assert mc.is_self_app("OpenJarvis") and not mc.is_self_app("Chrome")
+
+
+def test_screenshot_captures_app_behind_jarvis_without_switching(tmp_path):
+    runner = ShotRunner(front="Jarvis\nJarvis")
+    ctl = make_controller(tmp_path, runner=runner, windows=BEHIND)
+    ctl.http_client = FakeHttp()
+    result = mc.MacScreenshotDescribeTool(ctl).execute(question="What tab?")
+    assert result.success, result.content
+    shot_cmd = next(c for c in runner.calls if c[0] == "screencapture")
+    assert shot_cmd[shot_cmd.index("-l") + 1] == "42"  # Chrome's window, not Jarvis
+    assert not any(c[:2] == ["open", "-a"] for c in runner.calls)
+    assert "Google Chrome" in result.content
