@@ -36,6 +36,7 @@ import {
   type MemoryStats,
 } from '../lib/api';
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
+import { FORK_BUILD } from '../lib/forkUpdates';
 
 const CLOUD_KEY_STATUS_CHANGED = 'openjarvis-cloud-key-status-changed';
 
@@ -304,7 +305,7 @@ export function SettingsPage() {
   }, []);
 
   const handleCheckNow = useCallback(async () => {
-    if (!(window as any).__TAURI_INTERNALS__) return;
+    if (FORK_BUILD || !(window as any).__TAURI_INTERNALS__) return;
     setUpdateCheckState('checking');
     try {
       const { check } = await import('@tauri-apps/plugin-updater');
@@ -921,6 +922,11 @@ export function SettingsPage() {
 
           {/* Updates */}
           <Section title="Updates">
+            {FORK_BUILD ? (
+            <SettingRow label="Auto-update" description="Off on the Filo fork: the app never replaces itself with upstream. Open Updates in the sidebar to see what's new upstream and merge it by hand.">
+              <span className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>Disabled</span>
+            </SettingRow>
+            ) : (<>
             <SettingRow label="Auto-update" description="Check for new desktop builds automatically every 30 minutes">
               <button
                 onClick={() => handleAutoUpdateToggle(!autoUpdateEnabled)}
@@ -950,6 +956,7 @@ export function SettingsPage() {
                 {updateCheckState === 'idle' && 'Check now'}
               </button>
             </SettingRow>
+            </>)}
           </Section>
 
           {/* About */}

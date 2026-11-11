@@ -65,7 +65,20 @@ def _check_disabled() -> bool:
     # ``OPENJARVIS_NO_UPDATE_CHECK=0`` if they want the nudge anyway.
     if os.environ.get("CI", "").strip().lower() in ("1", "true", "yes", "on"):
         return True
+    # The Filo fork never polls PyPI or nags to upgrade: upstream releases
+    # would overwrite fork customizations. Use `jarvis fork-updates` instead.
+    if _running_from_fork():
+        return True
     return _config_disabled()
+
+
+def _running_from_fork() -> bool:
+    try:
+        from openjarvis.fork.detect import is_fork_checkout
+
+        return is_fork_checkout()
+    except Exception:
+        return False
 
 
 def _config_disabled() -> bool:

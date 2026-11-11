@@ -538,6 +538,12 @@ install_uv() {
 }
 
 clone_repo() {
+    # Filo fork: never replace a fork checkout with a fresh upstream clone,
+    # even with --force. Upstream changes are merged by hand (jarvis fork-updates).
+    if [[ -f "$SRC_DIR/.openjarvis-fork" ]]; then
+        echo "    $SRC_DIR is the Filo fork; leaving it untouched"
+        return 0
+    fi
     if [[ "$FORCE" -ne 1 ]] && [[ -d "$SRC_DIR/.git" ]]; then
         echo "    repo already at $SRC_DIR"
         return 0

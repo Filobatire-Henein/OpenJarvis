@@ -1,0 +1,8 @@
+# Marker file: this checkout is the Filo fork of OpenJarvis.
+#
+# Its presence tells OpenJarvis that this source tree must NEVER update
+# itself from upstream (no PyPI banner, no `jarvis self-update` pull, no
+# desktop auto-updater). Review upstream changes with the Updates tab in the
+# app or `jarvis fork-updates`, then merge by hand.
+#
+# Do not delete this file when merging upstream.

@@ -113,6 +113,25 @@ def self_update(check: bool, yes: bool) -> None:
     info = detect_install()
     current = openjarvis.__version__
 
+    # Fork guard: a personal fork must never pull upstream or get replaced by
+    # a PyPI build. Upstream changes are reviewed and merged by hand.
+    from openjarvis.fork.detect import FORK_REFUSAL_MESSAGE, detect_fork
+
+    # Only an editable checkout can be the fork; for PyPI/uv-tool installs the
+    # package path says nothing about a fork, so only OPENJARVIS_FORK counts.
+    fork = detect_fork(info.repo_root, search=False)
+    if fork.is_fork:
+        click.echo(f"Current OpenJarvis version: v{current}")
+        click.echo(FORK_REFUSAL_MESSAGE)
+        click.echo(
+            "Self-update is disabled here so upstream code never replaces your "
+            "customizations. Run `jarvis fork-updates` to see what's new upstream "
+            "and how to merge it safely.",
+        )
+        if fork.reasons:
+            click.echo(f"(Detected fork: {'; '.join(fork.reasons)})")
+        sys.exit(0 if check else 2)
+
     click.echo(f"Current OpenJarvis version: v{current}")
     click.echo(f"Install method: {info.kind}")
     if info.kind == "editable-git":

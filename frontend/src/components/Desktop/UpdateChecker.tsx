@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { PRIVATE_FORK } from '../../lib/fork';
+import { FORK_BUILD } from '../../lib/forkUpdates';
 
 type UpdateState = 'idle' | 'available' | 'downloading' | 'ready' | 'error';
 
@@ -7,10 +7,9 @@ const CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 const DISABLED_KEY = 'oj-auto-update-disabled';
 
 export function isAutoUpdateDisabled(): boolean {
-  // Filo fork: the bundled updater points at upstream releases, so installing
-  // one would silently replace the fork. Fork updates go through the Updates
-  // tab instead -- never through this auto-updater.
-  if (PRIVATE_FORK) return true;
+  // The Filo fork never auto-updates: an upstream desktop build would replace
+  // the fork's customizations. Use the Updates page instead.
+  if (FORK_BUILD) return true;
   try {
     return localStorage.getItem(DISABLED_KEY) === '1';
   } catch {
@@ -37,7 +36,7 @@ export function UpdateChecker() {
   const updateRef = useRef<any>(null);
 
   const checkForUpdate = useCallback(async () => {
-    if (isAutoUpdateDisabled()) return;
+    if (FORK_BUILD || isAutoUpdateDisabled()) return;
     try {
       const { check } = await import('@tauri-apps/plugin-updater');
       const update = await check();
@@ -75,7 +74,7 @@ export function UpdateChecker() {
 
   const handleDownload = useCallback(async () => {
     const update = updateRef.current;
-    if (!update) return;
+    if (!update || FORK_BUILD) return;
 
     setState('downloading');
     setProgress(0);
@@ -120,7 +119,7 @@ export function UpdateChecker() {
     setDismissed(false);
   }, []);
 
-  if (state === 'idle' || dismissed) return null;
+  if (FORK_BUILD || state === 'idle' || dismissed) return null;
 
   return (
     <div style={styles.banner}>
