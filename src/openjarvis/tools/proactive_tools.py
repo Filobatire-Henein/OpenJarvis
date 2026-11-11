@@ -383,6 +383,9 @@ class ExecutePendingActionsTool(BaseTool):
             actions = [a for a in store.list_approved() if a.id in set(action_ids)]
         else:
             actions = store.list_approved()
+        # Interactive mac_control approvals are executed by the blocked tool
+        # call that requested them, never by this batch executor.
+        actions = [a for a in actions if not a.action_type.startswith("mac_")]
 
         results: List[Dict[str, Any]] = []
         for action in actions:

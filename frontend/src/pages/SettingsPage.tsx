@@ -35,6 +35,7 @@ import {
   type InferenceSource,
   type MemoryStats,
 } from '../lib/api';
+import { ComputerControlSettings } from '../components/ComputerControlSettings';
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
 import { FORK_BUILD } from '../lib/forkUpdates';
 
@@ -659,6 +660,8 @@ export function SettingsPage() {
               <ApiKeyInput keyName="TAVILY_API_KEY" placeholder="tvly-..." toolName="web_search" />
             </SettingRow>
           </Section>
+
+          <ComputerControlSettings />
 
           {/* Memory */}
           <Section title="Memory">

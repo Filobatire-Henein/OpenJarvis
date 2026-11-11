@@ -1255,6 +1255,27 @@ class ProactiveConfig:
 
 
 @dataclass(slots=True)
+class MacControlConfig:
+    """macOS computer control (open apps, search, screen, keyboard/mouse).
+
+    OFF by default. Safe actions (open/focus apps, searches, screenshots,
+    listing apps) run without asking when ``allow_safe_without_asking`` is
+    true; risky actions (typing, clicking, key presses, scrolling, quitting
+    apps, running Shortcuts) ALWAYS require an Approve/Deny decision in the
+    UI and are denied automatically after ``approval_timeout_s`` seconds.
+    """
+
+    enabled: bool = False
+    allow_safe_without_asking: bool = True
+    approval_timeout_s: int = 60
+    max_risky_per_minute: int = 10
+    max_safe_per_minute: int = 30
+    # Local Ollama model used to describe screenshots. Empty = use
+    # intelligence.default_model (must report the "vision" capability).
+    vision_model: str = ""
+
+
+@dataclass(slots=True)
 class TelegramChannelConfig:
     """Per-channel config for Telegram."""
 
@@ -1803,6 +1824,7 @@ class JarvisConfig:
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     digest: DigestConfig = field(default_factory=DigestConfig)
     proactive: ProactiveConfig = field(default_factory=ProactiveConfig)
+    mac_control: MacControlConfig = field(default_factory=MacControlConfig)
     mining: Optional["MiningConfig"] = None
 
     @property
@@ -2129,6 +2151,7 @@ def load_config(path: Optional[Path] = None) -> JarvisConfig:
             "agent_manager",
             "digest",
             "proactive",
+            "mac_control",
             "memory_files",
             "system_prompt",
             "compression",
@@ -2459,6 +2482,7 @@ __all__ = [
     "AgentManagerConfig",
     "OperatorsConfig",
     "AgentLearningConfig",
+    "MacControlConfig",
     "BlueBubblesChannelConfig",
     "BrowserConfig",
     "CapabilitiesConfig",

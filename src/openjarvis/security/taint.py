@@ -56,6 +56,11 @@ SINK_POLICY: Dict[str, Set[TaintLabel]] = {
     "code_interpreter": {TaintLabel.SECRET},
     # File writes can stage data for later exfiltration; block secrets.
     "file_write": {TaintLabel.SECRET},
+    # Opening a URL / web search in the browser can carry data out in the URL.
+    "mac_open_url": {TaintLabel.PII, TaintLabel.SECRET},
+    "mac_search": {TaintLabel.SECRET},
+    # Typing can paste secrets into any app (each call is also user-approved).
+    "mac_type_text": {TaintLabel.SECRET},
 }
 
 # Patterns for auto-detecting taint in text

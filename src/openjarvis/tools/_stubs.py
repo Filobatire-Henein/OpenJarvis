@@ -488,6 +488,16 @@ class ToolExecutor:
             except ImportError:
                 pass
 
+        # Remember that untrusted content (web pages, screen text, ...) was
+        # just read, so computer-control approvals can flag possible injection.
+        if result.success:
+            try:
+                from openjarvis.security.untrusted_context import note_tool_output
+
+                note_tool_output(tool_call.name, getattr(tool, "is_local", True))
+            except Exception:
+                logger.debug("untrusted-context note failed", exc_info=True)
+
         # Prompt-injection defense: content returned by NON-LOCAL tools is
         # untrusted (web pages, emails, API responses). Scan it, and on a
         # HIGH/CRITICAL hit fence it with an explicit marker so the model

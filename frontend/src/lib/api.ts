@@ -1178,6 +1178,49 @@ export async function denyAction(actionId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Computer control (macOS)
+// ---------------------------------------------------------------------------
+
+export interface MacControlStatus {
+  platform_supported: boolean;
+  enabled: boolean;
+  stopped: boolean;
+  allow_safe_without_asking: boolean;
+  approval_timeout_s: number;
+  max_risky_per_minute: number;
+  max_safe_per_minute: number;
+  vision_model: string;
+  permissions: { accessibility: boolean | null; screen_recording: boolean | null };
+  help: Record<string, string>;
+  safe_actions: string[];
+  ask_first_actions: string[];
+  tools: Record<string, 'safe' | 'risky'>;
+}
+
+export async function fetchMacControlStatus(): Promise<MacControlStatus> {
+  const res = await apiFetch(`/v1/mac-control/status`);
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  return res.json();
+}
+
+export async function stopMacControl(): Promise<void> {
+  const res = await apiFetch(`/v1/mac-control/stop`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+}
+
+export async function resumeMacControl(): Promise<void> {
+  const res = await apiFetch(`/v1/mac-control/resume`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+}
+
+export async function openMacPrivacySettings(
+  pane: 'accessibility' | 'screen_recording' | 'automation',
+): Promise<void> {
+  const res = await apiFetch(`/v1/mac-control/open-settings/${pane}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+}
+
+// ---------------------------------------------------------------------------
 // Inference source (desktop only)
 // ---------------------------------------------------------------------------
 
