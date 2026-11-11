@@ -13,6 +13,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { useAppStore } from '../../lib/store';
+import { PRIVATE_FORK } from '../../lib/fork';
 import { getBase } from '../../lib/api';
 
 interface EnergyData {
@@ -210,7 +211,8 @@ export function SystemPanel() {
 
         </section>
 
-        {/* Leaderboard / Share */}
+        {/* Leaderboard / Share — hidden in the private fork (sends data to the cloud) */}
+        {!PRIVATE_FORK && (
         <section>
           <h4
             className="text-[11px] font-medium uppercase tracking-wide mb-2"
@@ -269,6 +271,7 @@ export function SystemPanel() {
             View Leaderboard
           </a>
         </section>
+        )}
       </div>
     </div>
   );

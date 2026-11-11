@@ -4,10 +4,11 @@ import { MessageBubble } from './MessageBubble';
 import { InputArea } from './InputArea';
 import { StreamingDots } from './StreamingDots';
 import { useAppStore } from '../../lib/store';
-import { shouldAutoplayFinishedReply, useTtsStore } from '../../lib/tts';
-import { stripThinkTags } from '../../lib/message-text';
-import { Sparkles, PanelRightOpen, PanelRightClose, Database, MessageSquare, X } from 'lucide-react';
+import { useReplyAutoplay } from '../../hooks/useReplyAutoplay';
+import { PanelRightOpen, PanelRightClose, Database, MessageSquare, X, Maximize2 } from 'lucide-react';
 import { listConnectors } from '../../lib/connectors-api';
+import { JarvisOrb } from '../Orb/JarvisOrb';
+import { useOrbMode } from '../../hooks/useOrbMode';
 
 function getGreeting(): string {
   const hour = new Date().getHours();
@@ -29,62 +30,7 @@ export function ChatArea() {
   const lastScrollTop = useRef(0);
   const isCurrentChatStreaming = streamState.isStreaming && streamState.conversationId === activeId;
 
-  // Autoplay: speak a reply once it is finished, never while it streams -- a
-  // partial sentence would be synthesized and then cut off by the next chunk.
-  // autoSpokenId fences the message so re-renders cannot repeat it.
-  const voiceOutputEnabled = useAppStore((s) => s.settings.voiceOutputEnabled);
-  const voiceAutoplay = useAppStore((s) => s.settings.voiceAutoplay);
-  // Probe the backend as soon as voice output is switched on. Without this the
-  // first reply could never autoplay: `available` is only set by ensureHealth,
-  // which until now ran solely from the per-message read-aloud button -- and
-  // that button does not exist until a reply is already on screen.
-  useEffect(() => {
-    if (!voiceOutputEnabled) return;
-    useTtsStore.getState().ensureHealth();
-  }, [voiceOutputEnabled]);
-
-  // Speak on the falling edge of a stream -- the moment a reply finishes -- and
-  // never merely because a finished reply happens to be on screen. Opening the
-  // app or switching conversations would otherwise read stale history aloud,
-  // and browsers block that anyway: playback with no preceding user gesture is
-  // rejected outright, so the failure would be silent in both senses.
-  const streamingConversationRef = useRef<string | null>(null);
-  useEffect(() => {
-    const last = messages[messages.length - 1];
-    const tts = useTtsStore.getState();
-    const justFinished = shouldAutoplayFinishedReply(
-      streamingConversationRef.current,
-      activeId,
-      streamState.isStreaming,
-      last,
-      tts.autoSpokenId,
-    );
-    streamingConversationRef.current = isCurrentChatStreaming ? activeId : null;
-
-    if (!justFinished) return;
-    if (!voiceOutputEnabled || !voiceAutoplay) return;
-
-    if (!last || last.role !== 'assistant' || activeId === null) return;
-
-    // Model loading may still be in flight when a fast reply completes. Wait
-    // for the probe, then confirm that this is still the active finished reply.
-    const completedConversationId = activeId;
-    const completedMessageId = last.id;
-    void tts.ensureHealth().then(() => {
-      const app = useAppStore.getState();
-      const currentTts = useTtsStore.getState();
-      const currentLast = app.messages[app.messages.length - 1];
-      if (app.activeId !== completedConversationId || app.streamState.isStreaming) return;
-      if (!app.settings.voiceOutputEnabled || !app.settings.voiceAutoplay) return;
-      if (currentLast?.id !== completedMessageId || currentTts.available !== true) return;
-      if (currentTts.autoSpokenId === completedMessageId) return;
-
-      const text = stripThinkTags(currentLast.content);
-      if (!text) return;
-      currentTts.markAutoSpoken(completedMessageId);
-      void currentTts.speak(completedMessageId, text);
-    });
-  }, [activeId, messages, streamState.isStreaming, isCurrentChatStreaming, voiceOutputEnabled, voiceAutoplay]);
+  useReplyAutoplay();
   const currentStreamContent = isCurrentChatStreaming ? streamState.content : '';
 
   // Check if any data sources are connected
@@ -129,13 +75,33 @@ export function ChatArea() {
   };
 
   const isEmpty = messages.length === 0 && !isCurrentChatStreaming;
+  const orbMode = useOrbMode();
 
   const PanelIcon = systemPanelOpen ? PanelRightClose : PanelRightOpen;
 
   return (
     <div className="flex flex-col h-full">
       {/* Toggle bar */}
-      <div className="flex items-center justify-end px-3 py-1.5 shrink-0">
+      <div className="flex items-center justify-end gap-1 px-3 py-1.5 shrink-0">
+        {!isEmpty && (
+          <button
+            onClick={() => navigate('/jarvis')}
+            className="mr-auto flex items-center gap-2 rounded-md pr-2 cursor-pointer"
+            style={{ color: 'var(--color-text-tertiary)', background: 'transparent', border: 'none' }}
+            title="Open Jarvis mode"
+          >
+            <JarvisOrb mode={orbMode} size={34} detail="low" />
+            <span className="text-xs capitalize">{orbMode === 'idle' ? 'Jarvis' : `${orbMode}…`}</span>
+          </button>
+        )}
+        <button
+          onClick={() => navigate('/jarvis')}
+          className="p-1.5 rounded-md transition-colors cursor-pointer"
+          style={{ color: 'var(--color-text-tertiary)' }}
+          title="Jarvis mode (full-screen orb)"
+        >
+          <Maximize2 size={15} />
+        </button>
         <button
           onClick={toggleSystemPanel}
           className="p-1.5 rounded-md transition-colors cursor-pointer"
@@ -182,12 +148,14 @@ export function ChatArea() {
       >
         {isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full px-4">
-            <div
-              className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4"
-              style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}
+            <button
+              onClick={() => navigate('/jarvis')}
+              className="mb-2 cursor-pointer"
+              style={{ background: 'transparent', border: 'none' }}
+              title="Open Jarvis mode"
             >
-              <Sparkles size={24} />
-            </div>
+              <JarvisOrb mode={orbMode} size={220} />
+            </button>
             <h2 className="text-xl font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
               {getGreeting()}
             </h2>

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { transcribeAudio, fetchSpeechHealth } from '../lib/api';
+import { detachAudio, trackStream, useOrbFlags } from '../lib/orb';
 
 export type SpeechState = 'idle' | 'recording' | 'transcribing';
 
@@ -39,6 +40,8 @@ export function useSpeech() {
 
       recorder.start();
       mediaRecorderRef.current = recorder;
+      trackStream(stream); // orb swells with your voice
+      useOrbFlags.getState().setListening(true);
       setState('recording');
     } catch (err) {
       setError('Microphone access denied');
@@ -55,6 +58,8 @@ export function useSpeech() {
       }
 
       recorder.onstop = async () => {
+        detachAudio();
+        useOrbFlags.getState().setListening(false);
         setState('transcribing');
 
         // Stop all audio tracks

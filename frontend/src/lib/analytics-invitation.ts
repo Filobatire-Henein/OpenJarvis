@@ -1,4 +1,5 @@
 import { fetchAnalyticsIdentity } from './analytics';
+import { PRIVATE_FORK } from './fork';
 
 const ANALYTICS_SEEN_KEY = 'openjarvis-analytics-choice-seen';
 
@@ -13,6 +14,8 @@ interface AnalyticsInvitation {
 export function offerAnalyticsChoice({
   ready, sharingModalSeen, open, markSharingModalSeen,
 }: AnalyticsInvitation): (() => void) | undefined {
+  // Private fork: never invite the user to share analytics / leaderboard data.
+  if (PRIVATE_FORK) return;
   if (!ready) return;
   if (!sharingModalSeen) {
     open();

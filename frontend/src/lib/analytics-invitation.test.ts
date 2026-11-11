@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ fetchIdentity: vi.fn() }));
+const mocks = vi.hoisted(() => ({ fetchIdentity: vi.fn(), fork: { PRIVATE_FORK: false } }));
 vi.mock('./analytics', () => ({ fetchAnalyticsIdentity: mocks.fetchIdentity }));
+// Upstream behaviour is tested with the private-fork switch off; the fork's
+// own guarantee (never invite) is tested at the bottom.
+vi.mock('./fork', () => mocks.fork);
 import { offerAnalyticsChoice } from './analytics-invitation';
 
 const seenKey = 'openjarvis-analytics-choice-seen';
@@ -83,5 +86,20 @@ describe('analytics invitation after setup', () => {
     offerAnalyticsChoice({ ...request, ready: true });
     await vi.waitFor(() => expect(request.open).toHaveBeenCalledOnce());
     expect(stored.get(seenKey)).toBe('true');
+  });
+});
+
+describe('private fork', () => {
+  it('never opens the sharing / leaderboard invitation', () => {
+    mocks.fork.PRIVATE_FORK = true;
+    try {
+      const request = { ...invitation(false), ready: true };
+      offerAnalyticsChoice(request);
+      expect(request.open).not.toHaveBeenCalled();
+      expect(request.markSharingModalSeen).not.toHaveBeenCalled();
+      expect(mocks.fetchIdentity).not.toHaveBeenCalled();
+    } finally {
+      mocks.fork.PRIVATE_FORK = false;
+    }
   });
 });
