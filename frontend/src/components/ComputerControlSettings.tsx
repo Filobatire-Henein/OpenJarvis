@@ -3,6 +3,7 @@ import { CheckCircle, HelpCircle, OctagonX, Play, XCircle } from 'lucide-react';
 import {
   fetchMacControlStatus,
   openMacPrivacySettings,
+  requestMacPermission,
   resumeMacControl,
   stopMacControl,
 } from '../lib/api';
@@ -44,7 +45,7 @@ function PermissionRow({
           className="text-xs px-2 py-1 rounded-md cursor-pointer shrink-0"
           style={{ border: '1px solid var(--color-border)', color: 'var(--color-accent)' }}
         >
-          Open System Settings
+          Allow…
         </button>
       )}
     </div>
@@ -209,7 +210,14 @@ export function ComputerControlSettings() {
           busy={busy}
           onStop={() => run(stopMacControl)}
           onResume={() => run(resumeMacControl)}
-          onOpenPane={(pane) => run(() => openMacPrivacySettings(pane))}
+          onOpenPane={(pane) =>
+            run(async () => {
+              // Let macOS ask on behalf of the running app first: switching on
+              // an old entry in System Settings does nothing for a new build.
+              const { granted } = await requestMacPermission(pane);
+              if (granted !== true && pane !== 'automation') await openMacPrivacySettings(pane);
+            })
+          }
         />
       ) : (
         <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>

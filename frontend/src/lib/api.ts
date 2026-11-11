@@ -1213,6 +1213,15 @@ export async function resumeMacControl(): Promise<void> {
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
 }
 
+/** Ask macOS for the permission from inside Jarvis (shows the system prompt). */
+export async function requestMacPermission(
+  kind: 'accessibility' | 'screen_recording' | 'automation',
+): Promise<{ granted: boolean | null }> {
+  const res = await apiFetch(`/v1/mac-control/request-permission/${kind}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  return res.json();
+}
+
 export async function openMacPrivacySettings(
   pane: 'accessibility' | 'screen_recording' | 'automation',
 ): Promise<void> {

@@ -100,24 +100,24 @@ def risk_of(tool_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 ACCESSIBILITY_HELP = (
-    "macOS has not given OpenJarvis Accessibility access, which is needed to "
+    "macOS has not given Jarvis Accessibility access, which is needed to "
     "type, press keys, click or scroll. Open System Settings → Privacy & "
-    "Security → Accessibility, turn on the app that runs OpenJarvis "
-    "(OpenJarvis, or Terminal/iTerm if you started it from a terminal), then "
+    "Security → Accessibility, turn on Jarvis (or Terminal/iTerm if you "
+    "started the server from a terminal), then "
     "try again. Shortcut: x-apple.systempreferences:com.apple.preference."
     "security?Privacy_Accessibility"
 )
 SCREEN_RECORDING_HELP = (
-    "macOS has not given OpenJarvis Screen Recording access, so it cannot see "
+    "macOS has not given Jarvis Screen Recording access, so it cannot see "
     "the screen. Open System Settings → Privacy & Security → Screen & System "
-    "Audio Recording, turn on the app that runs OpenJarvis, then restart it. "
+    "Audio Recording, turn on Jarvis, then restart it. "
     "Shortcut: x-apple.systempreferences:com.apple.preference.security?"
     "Privacy_ScreenCapture"
 )
 AUTOMATION_HELP = (
-    "macOS blocked OpenJarvis from controlling 'System Events'. Open System "
+    "macOS blocked Jarvis from controlling 'System Events'. Open System "
     "Settings → Privacy & Security → Automation and allow the app that runs "
-    "OpenJarvis to control System Events."
+    "Jarvis to control System Events."
 )
 DISABLED_MSG = (
     "Computer control is turned off. To enable it, add `[mac_control]` with "
@@ -401,6 +401,76 @@ def screen_recording_allowed() -> Optional[bool]:
         return bool(fn())
     except Exception:
         return None
+
+
+def request_permission(kind: str) -> Optional[bool]:
+    """Trigger macOS's own permission prompt for ``kind`` from this process.
+
+    * accessibility -- ``AXIsProcessTrustedWithOptions(prompt=true)``: shows
+      "… would like to control this computer" and adds the app to the list.
+    * screen_recording -- ``CGRequestScreenCaptureAccess()``.
+    * automation -- one read-only Apple Event to System Events (the frontmost
+      process name), which is what makes macOS ask.
+
+    Returns the current grant (True/False) or None when unknown.
+    """
+    if sys.platform != "darwin":
+        return None
+    try:
+        if kind == "accessibility":
+            ax = ctypes.cdll.LoadLibrary(
+                "/System/Library/Frameworks/ApplicationServices.framework/"
+                "ApplicationServices"
+            )
+            cf = ctypes.cdll.LoadLibrary(
+                "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+            )
+            key = ctypes.c_void_p.in_dll(ax, "kAXTrustedCheckOptionPrompt")
+            true = ctypes.c_void_p.in_dll(cf, "kCFBooleanTrue")
+            keys = (ctypes.c_void_p * 1)(key.value)
+            values = (ctypes.c_void_p * 1)(true.value)
+            key_cb = ctypes.c_void_p.in_dll(cf, "kCFTypeDictionaryKeyCallBacks")
+            val_cb = ctypes.c_void_p.in_dll(cf, "kCFTypeDictionaryValueCallBacks")
+            cf.CFDictionaryCreate.restype = ctypes.c_void_p
+            cf.CFDictionaryCreate.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p,
+            ]
+            options = cf.CFDictionaryCreate(
+                None, keys, values, 1,
+                ctypes.addressof(key_cb), ctypes.addressof(val_cb),
+            )
+            fn = ax.AXIsProcessTrustedWithOptions
+            fn.restype = ctypes.c_bool
+            fn.argtypes = [ctypes.c_void_p]
+            try:
+                return bool(fn(options))
+            finally:
+                cf.CFRelease.argtypes = [ctypes.c_void_p]
+                cf.CFRelease(options)
+        if kind == "screen_recording":
+            cg = ctypes.cdll.LoadLibrary(
+                "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+            )
+            fn = cg.CGRequestScreenCaptureAccess
+            fn.restype = ctypes.c_bool
+            return bool(fn())
+        if kind == "automation":
+            proc = subprocess.run(
+                osascript_argv(
+                    ['tell application "System Events" to get name of first '
+                     "process whose frontmost is true"]
+                ),
+                capture_output=True,
+                text=True,
+                timeout=120,  # the user may take a while to answer the prompt
+                check=False,
+            )
+            return proc.returncode == 0
+    except Exception:
+        logger.debug("permission request for %s failed", kind, exc_info=True)
+        return None
+    return None
 
 
 # ---------------------------------------------------------------------------

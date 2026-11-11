@@ -57,6 +57,26 @@ _SETTINGS_PANES = {
 }
 
 
+@router.post("/v1/mac-control/request-permission/{kind}")
+async def mac_control_request_permission(kind: str) -> Dict[str, Any]:
+    """Ask macOS for a permission *from this process*, so the system prompt
+    names Jarvis and records the exact app that is running.
+
+    Turning on an old entry in System Settings does nothing when it belongs to
+    an earlier build; letting the running app ask is the reliable way in.
+    """
+    import sys
+
+    from openjarvis.tools.mac_control import request_permission
+
+    if kind not in ("accessibility", "screen_recording", "automation"):
+        raise HTTPException(status_code=404, detail="Unknown permission")
+    if sys.platform != "darwin":
+        raise HTTPException(status_code=400, detail="macOS only")
+    granted = await asyncio.to_thread(request_permission, kind)
+    return {"kind": kind, "granted": granted}
+
+
 @router.post("/v1/mac-control/open-settings/{pane}")
 async def mac_control_open_settings(pane: str) -> Dict[str, Any]:
     """Open the matching Privacy & Security pane in System Settings."""
