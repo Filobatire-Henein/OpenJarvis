@@ -444,6 +444,42 @@ impl ChildHandle {
     }
 }
 
+/// Blocking group kill for the final Exit event (no async runtime left to
+/// await on). SIGTERM first so the server shuts down cleanly, then SIGKILL
+/// anything still alive after a short grace period.
+fn kill_groups_now(pids: &[u32]) {
+    #[cfg(unix)]
+    {
+        if pids.is_empty() {
+            return;
+        }
+        let groups: Vec<String> = pids.iter().map(|p| format!("-{p}")).collect();
+        let signal = |sig: &str| {
+            let mut cmd = std::process::Command::new("/bin/kill");
+            cmd.arg(sig).arg("--").args(&groups);
+            let _ = cmd.status();
+        };
+        signal("-TERM");
+        for _ in 0..15 {
+            std::thread::sleep(Duration::from_millis(100));
+            let alive = std::process::Command::new("/bin/kill")
+                .arg("-0")
+                .arg("--")
+                .args(&groups)
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !alive {
+                return;
+            }
+        }
+        signal("-KILL");
+    }
+    #[cfg(not(unix))]
+    let _ = pids;
+}
+
 /// Spawn a subprocess whose lifetime cannot escape the async operation that
 /// created it.  Tokio's default is `kill_on_drop(false)`, which means aborting
 /// the boot task in the small window between `spawn()` and storing the child in
@@ -3527,6 +3563,20 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building OpenJarvis Desktop")
         .run(move |app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // macOS Quit (Cmd+Q, Dock, a quit Apple Event) terminates the
+                // app without ExitRequested, so stop the backend groups here,
+                // synchronously, before the process is gone.
+                if let Ok(mgr) = backend.try_lock() {
+                    let pids: Vec<u32> = [mgr.jarvis.as_ref(), mgr.ollama.as_ref()]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|h| h.child.id())
+                        .collect();
+                    kill_groups_now(&pids);
+                }
+                return;
+            }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 // Hold the exit until the backend is really gone; the old
                 // fire-and-forget stop lost the race and left the server
