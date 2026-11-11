@@ -22,6 +22,30 @@ import { UpdateChecker } from './components/Desktop/UpdateChecker';
 import { track, hashId } from './lib/analytics';
 import { offerAnalyticsChoice } from './lib/analytics-invitation';
 
+
+const SERVER_MODEL_KEY = 'oj-server-model';
+
+/**
+ * When the server's configured model changes (config.toml default_model),
+ * switch the chat to it once. A model the user picks afterwards is kept.
+ */
+function followServerModel(model: string | undefined): void {
+  if (!model || model === 'default') return;
+  let last: string | null = null;
+  try {
+    last = localStorage.getItem(SERVER_MODEL_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+  if (last === model) return;
+  useAppStore.getState().setSelectedModel(model);
+  try {
+    localStorage.setItem(SERVER_MODEL_KEY, model);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 export default function App() {
   const [setupDone, setSetupDone] = useState(!isTauri());
   const handleSetupReady = useCallback(() => {
@@ -90,7 +114,12 @@ export default function App() {
   // Fetch server info
   useEffect(() => {
     if (!setupDone) return;
-    fetchServerInfo().then(setServerInfo).catch(() => {});
+    fetchServerInfo()
+      .then((info) => {
+        setServerInfo(info);
+        followServerModel(info?.model);
+      })
+      .catch(() => {});
   }, [setupDone, setServerInfo]);
 
   // Poll savings and optionally share to Supabase
