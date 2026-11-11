@@ -6,6 +6,9 @@ use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
 use tokio::sync::Mutex;
 
+/// Set once the backend has been stopped, so the final `exit(0)` goes through.
+static SHUTDOWN_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 const OLLAMA_PORT: u16 = 11434;
 const JARVIS_PORT: u16 = 8000;
 #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
@@ -411,7 +414,32 @@ struct ChildHandle {
 }
 
 impl ChildHandle {
+    /// Stop the child *and everything it started*. `jarvis serve` runs under
+    /// `uv run`, so killing only the direct child left the Python server
+    /// orphaned: it kept port 8000, the next app launch attached to it, and
+    /// macOS no longer counted it as part of the app (so Accessibility and
+    /// Automation grants did not apply). Children lead their own process group
+    /// (see `spawn_owned_child`), so signal the whole group.
     async fn kill(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            let group = format!("-{pid}");
+            let _ = tokio::process::Command::new("/bin/kill")
+                .args(["-TERM", "--", &group])
+                .status()
+                .await;
+            let exited = tokio::time::timeout(Duration::from_secs(4), self.child.wait())
+                .await
+                .is_ok();
+            // Whatever is left of the group (e.g. a child ignoring SIGTERM).
+            let _ = tokio::process::Command::new("/bin/kill")
+                .args(["-KILL", "--", &group])
+                .status()
+                .await;
+            if exited {
+                return;
+            }
+        }
         let _ = self.child.kill().await;
     }
 }
@@ -425,6 +453,9 @@ impl ChildHandle {
 /// `kill_on_drop(true)` before `output()`).
 fn spawn_owned_child(cmd: &mut tokio::process::Command) -> std::io::Result<tokio::process::Child> {
     cmd.kill_on_drop(true);
+    // Own process group, so `ChildHandle::kill` can stop grandchildren too.
+    #[cfg(unix)]
+    cmd.process_group(0);
     cmd.spawn()
 }
 
@@ -3495,11 +3526,21 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building OpenJarvis Desktop")
-        .run(move |_app, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
+        .run(move |app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                // Hold the exit until the backend is really gone; the old
+                // fire-and-forget stop lost the race and left the server
+                // running after Quit.
+                if SHUTDOWN_DONE.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                api.prevent_exit();
                 let b = backend.clone();
+                let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
                     b.lock().await.stop_all().await;
+                    SHUTDOWN_DONE.store(true, std::sync::atomic::Ordering::SeqCst);
+                    handle.exit(0);
                 });
             }
         });
