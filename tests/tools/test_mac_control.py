@@ -166,6 +166,7 @@ def test_risk_classification():
         "mac_open_url",
         "mac_screenshot_describe",
         "mac_move_mouse",
+        "mac_browser_tabs",
     }
     risky = {
         "mac_type_text",
@@ -870,3 +871,53 @@ def test_move_mouse_is_safe_and_bounded():
     tool = mc.MacMoveMouseTool.__new__(mc.MacMoveMouseTool)
     with pytest.raises(ValueError):
         tool._prepare({"x": -5, "y": 10})
+
+
+# ---------------------------------------------------------------------------
+# Browser tabs (read straight from the browser, no screenshot)
+# ---------------------------------------------------------------------------
+
+
+def _tabs_runner(out: str) -> FakeRunner:
+    runner = FakeRunner(front="Jarvis\nJarvis")
+    runner.stdout_for = {}
+
+    orig = runner.__call__
+
+    def call(cmd, timeout):
+        res = orig(cmd, timeout)
+        if any("active tab index" in part or "current tab of w" in part for part in cmd):
+            return subprocess.CompletedProcess(list(cmd), 0, out, "")
+        return res
+
+    return call  # type: ignore[return-value]
+
+
+def test_browser_tabs_lists_active_tab(tmp_path):
+    out = "1\t-\tInbox - Gmail\thttps://mail.google.com/\n1\t*\tYouTube\thttps://www.youtube.com/\n"
+    ctl = make_controller(tmp_path, runner=_tabs_runner(out))
+    result = mc.MacBrowserTabsTool(ctl).execute()
+    assert result.success
+    assert "* window 1: YouTube" in result.content
+    assert "  window 1: Inbox - Gmail" in result.content
+    assert "App in front: Jarvis" in result.content
+
+
+def test_browser_tabs_not_running_and_unknown_browser(tmp_path):
+    ctl = make_controller(tmp_path, runner=_tabs_runner("NOT_RUNNING"))
+    assert "not open" in mc.MacBrowserTabsTool(ctl).execute(browser="Safari").content
+    bad = mc.MacBrowserTabsTool(ctl).execute(browser='Finder" to do shell script "x')
+    assert not bad.success
+
+
+def test_browser_tabs_is_safe():
+    assert mc.risk_of("mac_browser_tabs") == mc.RISK_SAFE
+
+
+def test_screenshot_brings_app_forward(tmp_path, monkeypatch):
+    runner = FakeRunner(front="Google Chrome\nYouTube")
+    ctl = make_controller(tmp_path, runner=runner, sleep=lambda s: None)
+    tool = mc.MacScreenshotDescribeTool(ctl)
+    action, clean = tool._prepare({"question": "what tab?", "app": "chrome"})
+    assert clean["app"] == "Google Chrome"
+    assert "bring Google Chrome forward" in action

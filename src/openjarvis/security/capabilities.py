@@ -258,6 +258,7 @@ DEFAULT_TOOL_CAPABILITIES: Dict[str, List[str]] = {
     "list_scheduled_tasks": [Capability.SCHEDULE_CREATE],
     "llm": [Capability.NETWORK_FETCH],
     # macOS computer control (risky ones additionally need per-call approval)
+    "mac_browser_tabs": [Capability.FILE_READ],
     "mac_click": [Capability.SYSTEM_ADMIN],
     "mac_frontmost": [Capability.FILE_READ],
     "mac_list_apps": [Capability.FILE_READ],

@@ -279,6 +279,7 @@ LOCAL_ACCESS_TOOLS = {
     "knowledge_search",
     "knowledge_sql",
     # macOS computer control (local apps/screen; risky ones need approval)
+    "mac_browser_tabs",
     "mac_click",
     "mac_frontmost",
     "mac_list_apps",

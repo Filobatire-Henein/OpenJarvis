@@ -110,6 +110,7 @@ EXPECTED_TOOLS = {
     "mac_open_url",
     "mac_screenshot_describe",
     "mac_move_mouse",
+    "mac_browser_tabs",
     "mac_type_text",
     "mac_press_keys",
     "mac_click",
