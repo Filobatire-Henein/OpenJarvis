@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { synthesizeSpeech, fetchTtsHealth } from './api';
 import { toSpeakableText } from './message-text';
-import { detachAudio, trackElement } from './orb';
+import { audioContext, detachAudio, trackNode, unlockAudio } from './orb';
+import { SpeechStream } from './voiceStream';
 
 export type TtsState = 'idle' | 'loading' | 'speaking';
 
@@ -24,17 +25,21 @@ interface TtsStore {
   /** Last message spoken by autoplay, so a re-render never repeats it. */
   autoSpokenId: string | null;
   speak: (id: string, text: string) => Promise<void>;
+  /**
+   * Speak a reply while it streams: call with the whole text so far, and once
+   * more with final=true. Each message is followed at most once, so a reply
+   * the user stopped is never restarted by the next streamed token.
+   */
+  follow: (id: string, text: string, final: boolean) => void;
   stop: () => void;
   ensureHealth: () => Promise<void>;
   markAutoSpoken: (id: string) => void;
 }
 
 // Playback handles are not render state -- keeping them out of the store avoids
-// re-rendering every subscriber when an audio element is swapped.
-let audio: HTMLAudioElement | null = null;
-let objectUrl: string | null = null;
-let controller: AbortController | null = null;
-let token = 0;
+// re-rendering every subscriber when a clip is scheduled.
+let stream: SpeechStream | null = null;
+let streamId: string | null = null;
 let healthProbe: Promise<void> | null = null;
 
 /** Only a stream ending in the active conversation may trigger autoplay. */
@@ -54,26 +59,19 @@ export function shouldAutoplayFinishedReply(
 }
 
 function teardown(): void {
+  stream?.stop();
+  stream = null;
+  streamId = null;
   detachAudio();
-  if (audio) {
-    // Detach first: clearing src re-runs the media load algorithm, which fails
-    // on an empty source and dispatches an `error` event. With the handler
-    // still attached that surfaces as a bogus "Playback failed" after every
-    // successful utterance.
-    audio.onended = null;
-    audio.onerror = null;
-    audio.pause();
-    audio.src = '';
-    audio = null;
-  }
-  if (objectUrl) {
-    URL.revokeObjectURL(objectUrl);
-    objectUrl = null;
-  }
-  if (controller) {
-    controller.abort();
-    controller = null;
-  }
+}
+
+// Webviews only allow audio to start inside a user gesture. Unlock the shared
+// AudioContext on the first click or key press so replies can be spoken later
+// with no click at all.
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  const unlock = () => unlockAudio();
+  document.addEventListener('pointerdown', unlock, true);
+  document.addEventListener('keydown', unlock, true);
 }
 
 export const useTtsStore = create<TtsStore>((set, get) => ({
@@ -101,66 +99,65 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
   markAutoSpoken: (id: string) => set({ autoSpokenId: id }),
 
   speak: async (id: string, text: string) => {
-    const trimmed = toSpeakableText(text);
-    if (!trimmed) return;
+    if (!toSpeakableText(text)) return;
+    unlockAudio();
+    open(id, set).update(text, true);
+  },
 
-    // Bump before teardown so a synthesis still in flight is both aborted and
-    // fenced off by the token, even if the abort loses the race.
-    token += 1;
-    const mine = token;
-    teardown();
-    set({ state: 'loading', speakingId: id, error: null, errorId: null });
-
-    const ac = new AbortController();
-    controller = ac;
-
-    try {
-      const blob = await synthesizeSpeech(trimmed, { signal: ac.signal });
-      if (mine !== token) return;
-
-      const url = URL.createObjectURL(blob);
-      objectUrl = url;
-      const el = new Audio(url);
-      audio = el;
-      trackElement(el); // lets the orb ripple with the voice
-
-      el.onended = () => {
-        if (mine !== token) return;
-        teardown();
-        set({ state: 'idle', speakingId: null });
-      };
-      el.onerror = () => {
-        if (mine !== token) return;
-        teardown();
-        set({ state: 'idle', speakingId: null, error: 'Playback failed', errorId: id });
-      };
-
-      await el.play();
-      if (mine === token) set({ state: 'speaking', speakingId: id });
-    } catch (err) {
-      if (mine !== token) return;
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      teardown();
-      set({
-        state: 'idle',
-        speakingId: null,
-        error: err instanceof Error ? err.message : 'Speech synthesis failed',
-        errorId: id,
-      });
+  follow: (id: string, text: string, final: boolean) => {
+    if (streamId === id && stream) {
+      stream.update(text, final);
+      return;
     }
+    if (get().autoSpokenId === id) return; // already spoken, or stopped by the user
+    set({ autoSpokenId: id });
+    open(id, set).update(text, final);
   },
 
   stop: () => {
-    token += 1;
     teardown();
     set({ state: 'idle', speakingId: null, error: null, errorId: null });
   },
 }));
 
+type SetFn = (partial: Partial<TtsStore>) => void;
+
+function open(id: string, set: SetFn): SpeechStream {
+  teardown();
+  const mine: SpeechStream = new SpeechStream(
+    {
+      synth: (text, signal) => synthesizeSpeech(text, { signal }),
+      context: audioContext,
+      onLevelNode: trackNode, // lets the orb ripple with the voice
+    },
+    (status) => {
+      if (stream !== mine) return;
+      if (status === 'speaking') {
+        set({ state: 'speaking', speakingId: id });
+      } else if (status === 'done') {
+        stream = null;
+        streamId = null;
+        detachAudio();
+        set({ state: 'idle', speakingId: null });
+      }
+    },
+    (msg) => {
+      if (stream !== mine) return;
+      stream = null;
+      streamId = null;
+      detachAudio();
+      set({ state: 'idle', speakingId: null, error: msg, errorId: id });
+    },
+  );
+  stream = mine;
+  streamId = id;
+  set({ state: 'loading', speakingId: id, error: null, errorId: null });
+  return mine;
+}
+
 /** Test seam: reset module-level playback handles between cases. */
 export function __resetTtsForTests(): void {
   teardown();
-  token = 0;
   healthProbe = null;
   useTtsStore.setState({
     state: 'idle',

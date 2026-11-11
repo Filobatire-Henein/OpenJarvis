@@ -12,6 +12,8 @@ import {
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
+import { useTtsStore } from '../../lib/tts';
+import { unlockAudio, useOrbFlags } from '../../lib/orb';
 import type {
   ChatMessage,
   MessageTelemetry,
@@ -109,7 +111,14 @@ export function InputArea() {
     available: speechAvailable,
     startRecording,
     stopRecording,
+    cancelRecording,
   } = useSpeech();
+  const handsFreeSetting = useAppStore((s) => s.settings.handsFree);
+  const handsFree = useOrbFlags((s) => s.handsFree);
+  const setHandsFree = useOrbFlags((s) => s.setHandsFree);
+  const ttsState = useTtsStore((s) => s.state);
+  /** Set when a spoken question was sent: listen again once the reply is over. */
+  const awaitingReplyRef = useRef(false);
 
   // Abort in-flight stream when the user switches models mid-generation.
   // This prevents errors from trying to continue a stream with a stale model.
@@ -140,21 +149,6 @@ export function InputArea() {
     }
   }, [speechError]);
 
-  const handleMicClick = useCallback(async () => {
-    if (speechState === 'recording') {
-      try {
-        const text = await stopRecording();
-        if (text) {
-          setInput((prev) => (prev ? prev + ' ' + text : text));
-        }
-      } catch {
-        // Error is captured in useSpeech
-      }
-    } else {
-      await startRecording();
-    }
-  }, [speechState, startRecording, stopRecording]);
-
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -163,6 +157,8 @@ export function InputArea() {
   }, [input]);
 
   const stopStreaming = useCallback(() => {
+    awaitingReplyRef.current = false;
+    useOrbFlags.getState().setHandsFree(false);
     abortRef.current?.abort();
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -171,15 +167,16 @@ export function InputArea() {
     resetStream();
   }, [resetStream]);
 
-  const sendMessage = useCallback(async () => {
-    const content = input.trim();
+  const sendMessage = useCallback(async (override?: unknown) => {
+    const spoken = typeof override === 'string';
+    const content = (spoken ? override : input).trim();
     if (!content || streamState.isStreaming) return;
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
       return;
     }
 
-    setInput('');
+    if (!spoken) setInput('');
 
     let convId = activeId;
     if (!convId) {
@@ -554,6 +551,91 @@ export function InputArea() {
     maxTokens,
   ]);
 
+  // ── Voice ────────────────────────────────────────────────────────────
+  // Hands-free: tap the mic once. When you stop talking the question is
+  // transcribed and sent by itself, and once Jarvis has finished answering
+  // (and speaking) the mic opens again. Saying nothing for a few seconds, or
+  // tapping "End", ends the conversation.
+  const sendRef = useRef(sendMessage);
+  sendRef.current = sendMessage;
+
+  const endHandsFree = useCallback(() => {
+    awaitingReplyRef.current = false;
+    setHandsFree(false);
+    cancelRecording();
+  }, [cancelRecording, setHandsFree]);
+
+  const finishTurn = useCallback(async () => {
+    try {
+      const text = (await stopRecording()).trim();
+      if (!text) {
+        endHandsFree();
+        return;
+      }
+      awaitingReplyRef.current = true;
+      await sendRef.current(text);
+    } catch {
+      endHandsFree();
+    }
+  }, [stopRecording, endHandsFree]);
+
+  const listen = useCallback(async () => {
+    await startRecording({
+      onSilence: () => { void finishTurn(); },
+      onNoSpeech: () => {
+        endHandsFree();
+        toast('Hands-free paused — tap the mic to talk again.');
+      },
+    });
+  }, [startRecording, finishTurn, endHandsFree]);
+
+  const handleMicClick = useCallback(async () => {
+    unlockAudio();
+    if (!handsFreeSetting) {
+      if (speechState === 'recording') {
+        try {
+          const text = await stopRecording();
+          if (text) setInput((prev) => (prev ? prev + ' ' + text : text));
+        } catch {
+          // Error is captured in useSpeech
+        }
+      } else {
+        await startRecording();
+      }
+      return;
+    }
+    if (speechState === 'recording') {
+      await finishTurn(); // "I'm done" -- send now instead of waiting for silence
+      return;
+    }
+    // Start talking -- or interrupt Jarvis mid-sentence and talk.
+    useTtsStore.getState().stop();
+    awaitingReplyRef.current = false;
+    setHandsFree(true);
+    await listen();
+  }, [handsFreeSetting, speechState, startRecording, stopRecording, finishTurn, listen, setHandsFree]);
+
+  // Listen again once the reply has finished streaming and speaking.
+  useEffect(() => {
+    if (!handsFree || !awaitingReplyRef.current) return;
+    if (streamState.isStreaming || ttsState !== 'idle' || speechState !== 'idle') return;
+    const t = setTimeout(() => {
+      if (!useOrbFlags.getState().handsFree || !awaitingReplyRef.current) return;
+      if (useAppStore.getState().streamState.isStreaming) return;
+      if (useTtsStore.getState().state !== 'idle') return;
+      awaitingReplyRef.current = false;
+      void listen();
+    }, 700);
+    return () => clearTimeout(t);
+  }, [handsFree, streamState.isStreaming, ttsState, speechState, listen]);
+
+  // Leaving the view closes the mic and ends the conversation.
+  useEffect(() => () => {
+    awaitingReplyRef.current = false;
+    useOrbFlags.getState().setHandsFree(false);
+  }, []);
+  useEffect(() => () => cancelRecording(), [cancelRecording]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -625,14 +707,25 @@ export function InputArea() {
           </button>
         ) : (
           <div className="flex items-center gap-1">
+            {handsFree && (
+              <button
+                onClick={() => { useTtsStore.getState().stop(); endHandsFree(); }}
+                className="px-2 py-1 rounded-lg text-[11px] cursor-pointer"
+                style={{ color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}
+                title="End the hands-free conversation"
+              >
+                End
+              </button>
+            )}
             <MicButton
               state={speechState}
               onClick={handleMicClick}
               disabled={micDisabled}
               reason={micReason}
+              handsFree={handsFree}
             />
             <button
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={streamState.isStreaming || !input.trim() || modelLoading || !selectedModel}
               title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"

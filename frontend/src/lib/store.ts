@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { PRIVATE_FORK } from './fork';
 import type {
   Conversation,
   ChatMessage,
@@ -108,7 +109,16 @@ interface Settings {
   speechEnabled: boolean;
   voiceOutputEnabled: boolean;
   voiceAutoplay: boolean;
+  /** Mic sends on its own when you stop talking, and listens again after each reply. */
+  handsFree: boolean;
 }
+
+/**
+ * Filo fork: switch voice on once, for everyone who installed the fork. Without
+ * this the saved settings from before keep voice replies off and the user
+ * hears nothing. After this one migration their own choices are respected.
+ */
+const FORK_VOICE_MIGRATION_KEY = 'oj-fork-voice-defaults-v1';
 
 function loadSettings(): Settings {
   const defaults: Settings = {
@@ -123,11 +133,17 @@ function loadSettings(): Settings {
     speechEnabled: false,
     voiceOutputEnabled: false,
     voiceAutoplay: false,
+    handsFree: true,
   };
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return defaults;
-    return { ...defaults, ...JSON.parse(raw) };
+    const loaded: Settings = raw ? { ...defaults, ...JSON.parse(raw) } : { ...defaults };
+    if (PRIVATE_FORK && localStorage.getItem(FORK_VOICE_MIGRATION_KEY) !== '1') {
+      Object.assign(loaded, { speechEnabled: true, voiceOutputEnabled: true, voiceAutoplay: true, handsFree: true });
+      localStorage.setItem(FORK_VOICE_MIGRATION_KEY, '1');
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(loaded));
+    }
+    return loaded;
   } catch {
     return defaults;
   }

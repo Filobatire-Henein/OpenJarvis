@@ -6,9 +6,11 @@ interface MicButtonProps {
   onClick: () => void;
   disabled?: boolean;
   reason?: 'not-enabled' | 'no-backend' | 'streaming';
+  /** A hands-free conversation is running. */
+  handsFree?: boolean;
 }
 
-export function MicButton({ state, onClick, disabled, reason }: MicButtonProps) {
+export function MicButton({ state, onClick, disabled, reason, handsFree }: MicButtonProps) {
   const [showTooltip, setShowTooltip] = useState(false);
 
   const tooltipText =
@@ -35,11 +37,14 @@ export function MicButton({ state, onClick, disabled, reason }: MicButtonProps) 
       <button
         onClick={onClick}
         disabled={isInactive}
+        title={state === 'recording' ? (handsFree ? 'Listening — sends when you stop talking' : 'Stop recording') : handsFree ? 'Tap to interrupt and talk' : 'Talk to Jarvis'}
         className="p-2 rounded-xl transition-all shrink-0"
         style={{
           background: state === 'recording'
             ? 'var(--color-error)'
-            : 'transparent',
+            : handsFree
+              ? 'var(--color-accent-subtle)'
+              : 'transparent',
           color: state === 'recording'
             ? 'white'
             : isInactive

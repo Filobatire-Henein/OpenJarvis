@@ -1,73 +1,61 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../lib/store';
-import { shouldAutoplayFinishedReply, useTtsStore } from '../lib/tts';
-import { stripThinkTags } from '../lib/message-text';
+import { useTtsStore } from '../lib/tts';
 
 /**
- * Speak a reply once it is finished, never while it streams -- a partial
- * sentence would be synthesized and then cut off by the next chunk.
- * autoSpokenId fences the message so re-renders cannot repeat it.
+ * Speak replies *while they stream*: the voice starts as soon as the first
+ * sentence is complete, instead of waiting for the whole answer. Only a reply
+ * that streams in the active conversation is spoken -- opening the app or
+ * switching chats never reads old history aloud.
  *
- * Shared by the chat view and Jarvis mode so voice replies work in both.
- * Mount it in exactly one visible view at a time.
+ * Shared by the chat view and Jarvis mode. Mount it in exactly one visible
+ * view at a time.
  */
 export function useReplyAutoplay(): void {
   const activeId = useAppStore((s) => s.activeId);
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
-  const isCurrentChatStreaming = streamState.isStreaming && streamState.conversationId === activeId;
   const voiceOutputEnabled = useAppStore((s) => s.settings.voiceOutputEnabled);
   const voiceAutoplay = useAppStore((s) => s.settings.voiceAutoplay);
 
-  // Probe the backend as soon as voice output is switched on. Without this the
-  // first reply could never autoplay: `available` is only set by ensureHealth,
-  // which otherwise runs solely from the per-message read-aloud button -- and
-  // that button does not exist until a reply is already on screen.
+  // Probe the backend as soon as voice output is switched on.
   useEffect(() => {
     if (!voiceOutputEnabled) return;
     useTtsStore.getState().ensureHealth();
   }, [voiceOutputEnabled]);
 
-  // Speak on the falling edge of a stream -- the moment a reply finishes -- and
-  // never merely because a finished reply happens to be on screen. Opening the
-  // app or switching conversations would otherwise read stale history aloud,
-  // and browsers block that anyway: playback with no preceding user gesture is
-  // rejected outright, so the failure would be silent in both senses.
-  const streamingConversationRef = useRef<string | null>(null);
+  /** The reply being followed, and the longest text seen for it. */
+  const followingRef = useRef<{ conv: string; msg: string; text: string } | null>(null);
+
   useEffect(() => {
-    const last = messages[messages.length - 1];
     const tts = useTtsStore.getState();
-    const justFinished = shouldAutoplayFinishedReply(
-      streamingConversationRef.current,
-      activeId,
-      streamState.isStreaming,
-      last,
-      tts.autoSpokenId,
-    );
-    streamingConversationRef.current = isCurrentChatStreaming ? activeId : null;
+    const enabled = voiceOutputEnabled && voiceAutoplay && tts.available !== false;
+    const streaming = streamState.isStreaming && streamState.conversationId === activeId;
+    const last = messages[messages.length - 1];
+    const f = followingRef.current;
 
-    if (!justFinished) return;
-    if (!voiceOutputEnabled || !voiceAutoplay) return;
+    if (streaming && enabled && activeId && last?.role === 'assistant') {
+      const text = streamState.content || last.content;
+      if (f && f.msg !== last.id) tts.follow(f.msg, f.text, true);
+      const prev = f && f.msg === last.id ? f.text : '';
+      followingRef.current = { conv: activeId, msg: last.id, text: text.length >= prev.length ? text : prev };
+      tts.follow(last.id, followingRef.current.text, false);
+      return;
+    }
 
-    if (!last || last.role !== 'assistant' || activeId === null) return;
-
-    // Model loading may still be in flight when a fast reply completes. Wait
-    // for the probe, then confirm that this is still the active finished reply.
-    const completedConversationId = activeId;
-    const completedMessageId = last.id;
-    void tts.ensureHealth().then(() => {
-      const app = useAppStore.getState();
-      const currentTts = useTtsStore.getState();
-      const currentLast = app.messages[app.messages.length - 1];
-      if (app.activeId !== completedConversationId || app.streamState.isStreaming) return;
-      if (!app.settings.voiceOutputEnabled || !app.settings.voiceAutoplay) return;
-      if (currentLast?.id !== completedMessageId || currentTts.available !== true) return;
-      if (currentTts.autoSpokenId === completedMessageId) return;
-
-      const text = stripThinkTags(currentLast.content);
-      if (!text) return;
-      currentTts.markAutoSpoken(completedMessageId);
-      void currentTts.speak(completedMessageId, text);
-    });
-  }, [activeId, messages, streamState.isStreaming, isCurrentChatStreaming, voiceOutputEnabled, voiceAutoplay]);
+    if (!f) return;
+    // The stream ended (or the user switched chats): flush what is left.
+    followingRef.current = null;
+    const finalText =
+      last && last.id === f.msg && last.content.length >= f.text.length ? last.content : f.text;
+    tts.follow(f.msg, finalText, true);
+  }, [
+    activeId,
+    messages,
+    streamState.isStreaming,
+    streamState.content,
+    streamState.conversationId,
+    voiceOutputEnabled,
+    voiceAutoplay,
+  ]);
 }

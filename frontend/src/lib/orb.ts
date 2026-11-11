@@ -13,11 +13,16 @@ export type OrbMode = 'idle' | 'listening' | 'thinking' | 'speaking';
 interface OrbFlags {
   listening: boolean;
   setListening: (on: boolean) => void;
+  /** A hands-free conversation is running: listen again after each reply. */
+  handsFree: boolean;
+  setHandsFree: (on: boolean) => void;
 }
 
 export const useOrbFlags = create<OrbFlags>((set) => ({
   listening: false,
   setListening: (on) => set({ listening: on }),
+  handsFree: false,
+  setHandsFree: (on) => set({ handsFree: on }),
 }));
 
 let audioCtx: AudioContext | null = null;
@@ -53,6 +58,37 @@ export function trackStream(stream: MediaStream): void {
     analyser = makeAnalyser(c);
     src.connect(analyser);
     detach = () => src.disconnect();
+  } catch {
+    analyser = null;
+  }
+}
+
+/** The app's one shared AudioContext (created lazily). */
+export function audioContext(): AudioContext | null {
+  return ctx();
+}
+
+/**
+ * Call from a click/keypress: webviews only let an AudioContext start inside
+ * a user gesture. Once running it stays running, so later replies can be
+ * spoken without another click (that is what makes hands-free work).
+ */
+export function unlockAudio(): void {
+  ctx();
+}
+
+/** Track the loudness of any Web Audio node (used for spoken replies). */
+export function trackNode(node: AudioNode): void {
+  const c = ctx();
+  if (!c) return;
+  detachAudio();
+  try {
+    const a = makeAnalyser(c);
+    analyser = a;
+    node.connect(a);
+    detach = () => {
+      try { node.disconnect(a); } catch { /* already gone */ }
+    };
   } catch {
     analyser = null;
   }

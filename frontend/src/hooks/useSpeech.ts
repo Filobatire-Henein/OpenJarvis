@@ -1,8 +1,16 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { transcribeAudio, fetchSpeechHealth } from '../lib/api';
-import { detachAudio, trackStream, useOrbFlags } from '../lib/orb';
+import { audioContext, detachAudio, trackStream, useOrbFlags } from '../lib/orb';
+import { createSilenceDetector, type SilenceDetector } from '../lib/vad';
 
 export type SpeechState = 'idle' | 'recording' | 'transcribing';
+
+export interface RecordOptions {
+  /** Called once when you stop talking (hands-free mode). */
+  onSilence?: () => void;
+  /** Called if nothing was said for a while after the mic opened. */
+  onNoSpeech?: () => void;
+}
 
 export function useSpeech() {
   const [state, setState] = useState<SpeechState>('idle');
@@ -11,6 +19,7 @@ export function useSpeech() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const vadRef = useRef<{ stop: () => void } | null>(null);
 
   // Check if speech backend is available on mount
   useEffect(() => {
@@ -19,7 +28,7 @@ export function useSpeech() {
       .catch(() => setAvailable(false));
   }, []);
 
-  const startRecording = useCallback(async (): Promise<void> => {
+  const startRecording = useCallback(async (opts: RecordOptions = {}): Promise<void> => {
     setError(null);
 
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -43,6 +52,11 @@ export function useSpeech() {
       trackStream(stream); // orb swells with your voice
       useOrbFlags.getState().setListening(true);
       setState('recording');
+
+      if (opts.onSilence || opts.onNoSpeech) {
+        const c = audioContext();
+        if (c) vadRef.current = watchForSilence(c, stream, opts);
+      }
     } catch (err) {
       setError('Microphone access denied');
       setState('idle');
@@ -58,6 +72,8 @@ export function useSpeech() {
       }
 
       recorder.onstop = async () => {
+        vadRef.current?.stop();
+        vadRef.current = null;
         detachAudio();
         useOrbFlags.getState().setListening(false);
         setState('transcribing');
@@ -85,7 +101,25 @@ export function useSpeech() {
     });
   }, []);
 
+  /** Stop and throw the recording away (no transcription). */
+  const cancelRecording = useCallback(() => {
+    vadRef.current?.stop();
+    vadRef.current = null;
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state === 'recording') {
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    chunksRef.current = [];
+    detachAudio();
+    useOrbFlags.getState().setListening(false);
+    setState('idle');
+  }, []);
+
   return {
+    cancelRecording,
     state,
     error,
     available,
@@ -94,4 +128,32 @@ export function useSpeech() {
     isRecording: state === 'recording',
     isTranscribing: state === 'transcribing',
   };
+}
+
+/** Poll the mic level and report end-of-speech / no-speech. */
+function watchForSilence(c: AudioContext, stream: MediaStream, opts: RecordOptions): { stop: () => void } {
+  const src = c.createMediaStreamSource(stream);
+  const analyser = c.createAnalyser();
+  analyser.fftSize = 1024;
+  src.connect(analyser);
+  const buf = new Float32Array(analyser.fftSize);
+  const detector: SilenceDetector = createSilenceDetector();
+  const t0 = performance.now();
+  let fired = false;
+  const timer = window.setInterval(() => {
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const verdict = detector.push(Math.sqrt(sum / buf.length), performance.now() - t0);
+    if (fired || verdict === 'continue') return;
+    fired = true;
+    stop();
+    if (verdict === 'ended') opts.onSilence?.();
+    else opts.onNoSpeech?.();
+  }, 50);
+  function stop() {
+    window.clearInterval(timer);
+    try { src.disconnect(); } catch { /* gone */ }
+  }
+  return { stop };
 }

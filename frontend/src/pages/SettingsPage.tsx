@@ -802,6 +802,23 @@ export function SettingsPage() {
                 />
               </button>
             </SettingRow>
+            <SettingRow label="Hands-free conversation" description="Tap the mic once: it sends when you stop talking and listens again after each reply">
+              <button
+                onClick={() => { updateSettings({ handsFree: !settings.handsFree }); showSaved(); }}
+                className="relative w-11 h-6 rounded-full transition-colors cursor-pointer"
+                style={{
+                  background: settings.handsFree ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
+                }}
+              >
+                <span
+                  className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform bg-white"
+                  style={{
+                    transform: settings.handsFree ? 'translateX(20px)' : 'translateX(0)',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                  }}
+                />
+              </button>
+            </SettingRow>
             <SettingRow label="Text-to-Speech" description="Show a read-aloud button on assistant replies">
               <button
                 onClick={() => { updateSettings({ voiceOutputEnabled: !settings.voiceOutputEnabled }); showSaved(); }}
@@ -819,7 +836,7 @@ export function SettingsPage() {
                 />
               </button>
             </SettingRow>
-            <SettingRow label="Speak replies automatically" description="Read every assistant reply aloud as soon as it finishes">
+            <SettingRow label="Speak replies automatically" description="Read every reply aloud, starting while it is still being written">
               <button
                 onClick={() => { updateSettings({ voiceAutoplay: !settings.voiceAutoplay }); showSaved(); }}
                 disabled={!settings.voiceOutputEnabled}
