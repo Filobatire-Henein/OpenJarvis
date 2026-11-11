@@ -142,8 +142,9 @@ fn boot_plan(cfg: &InferenceConfig, ram_gb: f64) -> BootPlan {
                     "ollama".into(),
                     "--model".into(),
                     model,
-                    "--agent".into(),
-                    "simple".into(),
+                    // Filo fork: no `--agent` override -- `jarvis serve` uses
+                    // `[agent] default_agent` from config.toml, so a
+                    // tool-calling agent (orchestrator) can open apps etc.
                 ],
             }
         }
@@ -173,8 +174,9 @@ fn boot_plan(cfg: &InferenceConfig, ram_gb: f64) -> BootPlan {
                     engine,
                     "--model".into(),
                     model,
-                    "--agent".into(),
-                    "simple".into(),
+                    // Filo fork: no `--agent` override -- `jarvis serve` uses
+                    // `[agent] default_agent` from config.toml, so a
+                    // tool-calling agent (orchestrator) can open apps etc.
                 ],
             }
         }
