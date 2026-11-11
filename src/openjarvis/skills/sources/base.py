@@ -50,8 +50,15 @@ class SourceResolver(ABC):
     def list_skills(self) -> List[ResolvedSkill]:
         """Walk the cache directory and return all discoverable skills."""
 
-    def _sync_git_cache(self, repo_url: str) -> None:
-        """Refresh a usable cache best-effort; an initial clone must succeed."""
+    def _sync_git_cache(
+        self, repo_url: str, sparse_paths: List[str] | None = None
+    ) -> None:
+        """Refresh a usable cache best-effort; an initial clone must succeed.
+
+        When *sparse_paths* is given the initial clone is shallow and sparse
+        (only those directories are checked out) so large monorepos that ship
+        a ``skills/`` folder stay cheap to fetch.
+        """
         cache = self.cache_dir()
         self.refresh_warning = ""
         if (cache / ".git").exists():
@@ -72,7 +79,26 @@ class SourceResolver(ABC):
                 logging.getLogger(__name__).warning(self.refresh_warning)
         else:
             cache.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["git", "clone", repo_url, str(cache)], check=True)
+            if sparse_paths:
+                subprocess.run(
+                    [
+                        "git",
+                        "clone",
+                        "--depth",
+                        "1",
+                        "--filter=blob:none",
+                        "--sparse",
+                        repo_url,
+                        str(cache),
+                    ],
+                    check=True,
+                )
+                subprocess.run(
+                    ["git", "-C", str(cache), "sparse-checkout", "set", *sparse_paths],
+                    check=True,
+                )
+            else:
+                subprocess.run(["git", "clone", repo_url, str(cache)], check=True)
 
     def resolve(self, query: str) -> List[ResolvedSkill]:
         """Filter list_skills() by name (substring match).
