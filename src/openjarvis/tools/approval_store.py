@@ -193,9 +193,19 @@ class ApprovalStore:
         permission_key: str,
         tier: str,
         ttl_hours: int = 24,
+        ttl_seconds: Optional[float] = None,
     ) -> PendingAction:
-        """Create and persist a new pending action."""
+        """Create and persist a new pending action.
+
+        ``ttl_seconds`` (when given) overrides ``ttl_hours`` — used by
+        interactive, blocking approvals that must expire within a minute.
+        """
         now = datetime.now(timezone.utc)
+        ttl = (
+            timedelta(seconds=float(ttl_seconds))
+            if ttl_seconds is not None
+            else timedelta(hours=ttl_hours)
+        )
         action = PendingAction(
             id=uuid.uuid4().hex[:12],
             action_type=action_type,
@@ -205,7 +215,7 @@ class ApprovalStore:
             tier=tier,
             status=STATUS_PENDING,
             created_at=now.isoformat(),
-            expires_at=(now + timedelta(hours=ttl_hours)).isoformat(),
+            expires_at=(now + ttl).isoformat(),
         )
         self._conn.execute(
             """

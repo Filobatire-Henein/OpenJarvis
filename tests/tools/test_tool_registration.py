@@ -102,6 +102,19 @@ EXPECTED_TOOLS = {
     "get_pending_actions",
     "record_decision",
     "execute_pending_actions",
+    # mac_control.py
+    "mac_open_app",
+    "mac_list_apps",
+    "mac_frontmost",
+    "mac_search",
+    "mac_open_url",
+    "mac_screenshot_describe",
+    "mac_type_text",
+    "mac_press_keys",
+    "mac_click",
+    "mac_scroll",
+    "mac_quit_app",
+    "mac_run_shortcut",
 }
 
 

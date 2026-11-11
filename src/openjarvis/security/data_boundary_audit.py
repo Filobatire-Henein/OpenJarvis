@@ -224,6 +224,9 @@ BROWSER_TOOLS = {
     "browser_search",
     "browser_type",
     "web_browser",
+    # macOS computer control: these open the default browser on a URL.
+    "mac_open_url",
+    "mac_search",
 }
 GENERIC_NETWORK_TOOLS = {"http_request"}
 WEATHER_TOOLS = {"get_weather"}
@@ -275,6 +278,17 @@ LOCAL_ACCESS_TOOLS = {
     "kg_query",
     "knowledge_search",
     "knowledge_sql",
+    # macOS computer control (local apps/screen; risky ones need approval)
+    "mac_click",
+    "mac_frontmost",
+    "mac_list_apps",
+    "mac_open_app",
+    "mac_press_keys",
+    "mac_quit_app",
+    "mac_run_shortcut",
+    "mac_screenshot_describe",
+    "mac_scroll",
+    "mac_type_text",
     "memory_index",
     "memory_manage",
     "memory_retrieve",

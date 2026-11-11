@@ -1293,6 +1293,14 @@ def include_all_routes(app) -> None:
     )
 
     app.include_router(approval_router)
+    try:
+        from openjarvis.server.mac_control_routes import (
+            router as mac_control_router,  # noqa: PLC0415
+        )
+
+        app.include_router(mac_control_router)
+    except ImportError:
+        pass
     app.include_router(agents_router)
     app.include_router(memory_router)
     app.include_router(traces_router)

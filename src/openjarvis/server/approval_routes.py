@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from openjarvis.tools.approval_store import (
     STATUS_APPROVED,
     STATUS_DENIED,
+    STATUS_PENDING,
     ApprovalStore,
     PendingAction,
 )
@@ -60,6 +61,10 @@ async def approve_action(action_id: str) -> Dict[str, Any]:
     action = store.get_action(action_id)
     if action is None:
         raise HTTPException(status_code=404, detail="Action not found")
+    if action.action_type.startswith("mac_") and action.status != STATUS_PENDING:
+        # Interactive computer-control approvals are one-shot: a late click
+        # after the timeout (default deny) must not resurrect the action.
+        raise HTTPException(status_code=409, detail=f"Action already {action.status}")
     store.update_status(action_id, STATUS_APPROVED)
     logger.info("Action %s approved via UI", action_id)
     return {"status": "approved", "id": action_id}
