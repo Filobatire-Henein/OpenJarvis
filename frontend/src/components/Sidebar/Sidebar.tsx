@@ -17,12 +17,15 @@ import {
   Loader2,
   ScrollText,
   Database,
+  GitPullRequest,
 } from 'lucide-react';
 import { ConversationList } from './ConversationList';
 import { useAppStore } from '../../lib/store';
+import { useForkPendingCount } from '../../lib/forkUpdates';
 
 export function Sidebar() {
   const navigate = useNavigate();
+  const forkPending = useForkPendingCount();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -58,6 +61,7 @@ export function Sidebar() {
     { path: '/data-sources', icon: Database, label: 'Data Sources' },
     { path: '/agents', icon: Bot, label: 'Agents' },
     { path: '/logs', icon: ScrollText, label: 'Logs' },
+    { path: '/updates', icon: GitPullRequest, label: 'Updates' },
     { path: '/settings', icon: Settings, label: 'Settings' },
     { path: '/get-started', icon: Rocket, label: 'Get Started' },
   ];
@@ -224,6 +228,15 @@ export function Sidebar() {
                   )}
                   <item.icon size={16} style={isActive ? { color: 'var(--color-accent)' } : undefined} />
                   {item.label}
+                  {item.path === '/updates' && !!forkPending && (
+                    <span
+                      className="ml-auto text-[10px] font-semibold px-1.5 rounded-full"
+                      style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}
+                      title={`${forkPending} upstream commits not merged yet`}
+                    >
+                      {forkPending > 99 ? '99+' : forkPending}
+                    </span>
+                  )}
                 </button>
               );
             })}

@@ -23,6 +23,9 @@ from openjarvis.cli._version_check import (
 def _clean_env(monkeypatch, tmp_path):
     for v in ("OPENJARVIS_NO_UPDATE_CHECK", "CI", "OPENJARVIS_CONFIG"):
         monkeypatch.delenv(v, raising=False)
+    # These tests exercise upstream's PyPI banner; the fork disables it
+    # (see tests/fork/), so pretend we're not running from the fork.
+    monkeypatch.setenv("OPENJARVIS_FORK", "0")
     # Point config + cache at empty tmp paths so tests don't see the
     # developer's real ~/.openjarvis state.
     monkeypatch.setenv("OPENJARVIS_CONFIG", str(tmp_path / "no-config.toml"))

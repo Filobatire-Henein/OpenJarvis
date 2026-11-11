@@ -1,5 +1,11 @@
 # Desktop auto-update
 
+> **Filo fork:** auto-update is switched off in this fork. `plugins.updater`
+> in `tauri.conf.json` has `active: false` and no endpoints, and the
+> frontend's `UpdateChecker` never calls the updater (`FORK_BUILD` in
+> `frontend/src/lib/forkUpdates.ts`). Review upstream changes on the
+> **Updates** page (or `jarvis fork-updates`) and merge them by hand.
+
 The OpenJarvis desktop app ships with [Tauri's updater
 plugin](https://v2.tauri.app/plugin/updater/), which checks for new
 versions on launch and every 30 minutes. When a newer signed build is

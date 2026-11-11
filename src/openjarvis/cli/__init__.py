@@ -113,6 +113,7 @@ if not _DATA_BOUNDARY_BOOTSTRAP:
     from openjarvis.cli.doctor_cmd import doctor
     from openjarvis.cli.eval_cmd import eval_group
     from openjarvis.cli.feedback_cmd import feedback_group
+    from openjarvis.cli.fork_updates_cmd import fork_updates
     from openjarvis.cli.gateway_cmd import gateway
     from openjarvis.cli.gui_cmd import gui
     from openjarvis.cli.host_cmd import host
@@ -186,6 +187,7 @@ if not _DATA_BOUNDARY_BOOTSTRAP:
             "deep-research command unavailable: %s", _dr_exc
         )
     cli.add_command(self_update, "self-update")
+    cli.add_command(fork_updates, "fork-updates")
     cli.add_command(bootstrap_cmd, "_bootstrap")
 
     # Gateway CLI commands (lazy import to avoid pulling starlette)
