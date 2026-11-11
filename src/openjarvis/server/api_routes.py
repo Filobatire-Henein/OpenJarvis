@@ -1131,7 +1131,9 @@ def _tts_voice_and_speed(request: Request, backend) -> tuple[str, float]:
 @speech_router.post("/synthesize")
 async def synthesize_speech(request: Request, body: SpeechSynthesizeRequest):
     """Synthesize text to speech and return the audio as WAV."""
-    text = body.text.strip()
+    from openjarvis.speech._speakable import to_speakable
+
+    text = to_speakable(body.text)
     if not text:
         raise HTTPException(status_code=400, detail="Missing 'text'")
     if len(text) > _MAX_TTS_CHARS:
