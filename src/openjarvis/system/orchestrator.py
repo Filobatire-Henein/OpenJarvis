@@ -52,6 +52,7 @@ class QueryOrchestrator:
                     top_k=s.config.memory.context_top_k,
                     min_score=s.config.memory.context_min_score,
                     max_context_tokens=s.config.memory.context_max_tokens,
+                    fact_top_k=getattr(s.config.memory, "context_fact_top_k", 8),
                 )
                 facts = load_configured_facts(s.config)
                 messages = inject_context(

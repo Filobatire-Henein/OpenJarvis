@@ -1290,6 +1290,16 @@ async def start_optimize_run(req: OptimizeRunRequest, request: Request):
     return {"status": "started", "run_id": "placeholder"}
 
 
+def _include_mind_routes(app) -> None:
+    """Mind page: local memory web + live thought stream (never fatal)."""
+    try:
+        from openjarvis.server.mind_routes import include_mind_routes
+
+        include_mind_routes(app)
+    except Exception:
+        logger.debug("Mind routes not available", exc_info=True)
+
+
 def include_all_routes(app) -> None:
     """Include all extended API routers in a FastAPI app."""
     from openjarvis.server.approval_routes import (
@@ -1310,6 +1320,7 @@ def include_all_routes(app) -> None:
     app.include_router(speech_router)
     app.include_router(feedback_router)
     app.include_router(optimize_router)
+    _include_mind_routes(app)
 
     # Agent Manager routes (if available)
     try:
