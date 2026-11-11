@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- Without a usage description WKWebView hides navigator.mediaDevices,
+       so voice input fails with "Microphone not supported in this browser". -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>OpenJarvis uses the microphone for voice input when you press the mic button.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <!-- The desktop API URL is user-configurable, so it cannot be represented
