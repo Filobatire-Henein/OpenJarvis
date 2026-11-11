@@ -252,6 +252,122 @@ def _sync_resolver(resolver, console: Console) -> None:
         console.print(warning, style="yellow", markup=False)
 
 
+_RATING_STYLE = {
+    "recommended": "bold green",
+    "useful": "green",
+    "caution": "bold yellow",
+    "unsafe": "bold red",
+}
+
+
+def _print_review(console: Console, review, *, compact: bool = False) -> None:
+    """Show the advisor's verdict in plain English."""
+    from openjarvis.skills.advisor import capability_label
+
+    style = _RATING_STYLE.get(review.rating, "white")
+    label = f"{review.source}:{review.category + '/' if review.category else ''}"
+    console.print(
+        f"[{style}]{review.rating.upper()}[/{style}] "
+        f"[bold]{escape(label + review.name)}[/bold] (score {review.score}/100)"
+    )
+    if compact:
+        if review.rating in ("caution", "unsafe") and review.reasons:
+            console.print(f"    {escape(review.reasons[0])}", markup=True)
+        return
+    for reason in review.reasons:
+        console.print(f"  - {escape(reason)}")
+    if review.capabilities:
+        console.print(
+            "  Can: "
+            + escape(", ".join(capability_label(c) for c in review.capabilities))
+        )
+    if review.usefulness:
+        console.print(f"  Usefulness: {escape(review.usefulness)}")
+
+
+def _gate_cli(
+    console: Console,
+    review,
+    *,
+    assume_yes: bool,
+    override_unsafe: bool,
+    yes_dangerous: bool,
+) -> bool:
+    """Run the review gate for one skill. Returns True if install may proceed."""
+    from openjarvis.skills.advisor import ReviewStore
+
+    store = ReviewStore()
+    if any(f.get("rule") == "declared_dangerous" for f in review.findings) and not (
+        yes_dangerous
+    ):
+        console.print(
+            "[red]This skill requests dangerous capabilities "
+            f"({escape(', '.join(review.capabilities))}). Re-run with "
+            "--yes-dangerous if you trust it.[/red]"
+        )
+        store.put(review, decision="blocked")
+        return False
+    if review.rating == "unsafe":
+        if not override_unsafe:
+            console.print(
+                "[bold red]Blocked:[/bold red] Jarvis rated this skill UNSAFE. "
+                "If you are absolutely sure, re-run with --override-unsafe."
+            )
+            store.put(review, decision="blocked")
+            return False
+        typed = click.prompt(
+            f"Type the skill name ({review.name}) to install this UNSAFE skill anyway",
+            default="",
+            show_default=False,
+        )
+        if typed.strip() != review.name:
+            console.print("[dim]Not installed.[/dim]")
+            store.put(review, decision="declined")
+            return False
+        return True
+    if review.rating == "caution" and not assume_yes:
+        if not click.confirm(
+            "Install this skill despite the risks above?", default=False
+        ):
+            console.print("[dim]Not installed.[/dim]")
+            store.put(review, decision="declined")
+            return False
+    return True
+
+
+@skill.command("review")
+@click.argument("query")
+@click.option("--url", default="", help="Repo URL (required when source is 'github').")
+@click.option(
+    "--explain",
+    is_flag=True,
+    default=False,
+    help="Also ask the local model for a plain-English summary (never cloud).",
+)
+def review_cmd(query: str, url: str, explain: bool):
+    """Review a skill without installing it.
+
+    Example: ``jarvis skill review hermes:apple-notes``
+    """
+    from openjarvis.skills import advisor_service as svc
+
+    console = Console()
+    if ":" in query:
+        source, name = _parse_source_query(query)
+    else:
+        source, name = "local", query
+    try:
+        review = svc.review_one(source, name, url=url, explain=explain)
+    except svc.AdvisorError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise SystemExit(1)
+    _print_review(console, review)
+    if review.summary:
+        console.print(f"\n{escape(review.summary)}")
+    if review.install_command:
+        console.print(f"[dim]How to add: {escape(review.install_command)}[/dim]")
+
+
 @skill.command("install")
 @click.argument("query")
 @click.option(
@@ -277,7 +393,29 @@ def _sync_resolver(resolver, console: Console) -> None:
         "capabilities (shell/network-listen/filesystem-write)."
     ),
 )
-def install(query: str, with_scripts: bool, force: bool, url: str, yes_dangerous: bool):
+@click.option(
+    "--yes",
+    "-y",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    help="Accept a 'caution' verdict without prompting (never skips 'unsafe').",
+)
+@click.option(
+    "--override-unsafe",
+    is_flag=True,
+    default=False,
+    help="Allow installing a skill rated UNSAFE (still asks you to type its name).",
+)
+def install(
+    query: str,
+    with_scripts: bool,
+    force: bool,
+    url: str,
+    yes_dangerous: bool,
+    assume_yes: bool,
+    override_unsafe: bool,
+):
     """Install a skill from a source.
 
     Example: ``jarvis skill install hermes:apple-notes``
@@ -306,9 +444,23 @@ def install(query: str, with_scripts: bool, force: bool, url: str, yes_dangerous
         console.print(f"[red]No skill named '{name}' found in source '{source}'[/red]")
         raise SystemExit(1)
 
+    from openjarvis.skills.advisor import ReviewStore, SkillReviewer
     from openjarvis.skills.importer import SkillImporter
     from openjarvis.skills.parser import SkillParser
     from openjarvis.skills.tool_translator import ToolTranslator
+
+    # Jarvis reviews every skill before it is added.
+    review = SkillReviewer().review_resolved(matches[0])
+    ReviewStore().put(review)
+    _print_review(console, review)
+    if not _gate_cli(
+        console,
+        review,
+        assume_yes=assume_yes,
+        override_unsafe=override_unsafe,
+        yes_dangerous=yes_dangerous,
+    ):
+        raise SystemExit(1)
 
     importer = SkillImporter(parser=SkillParser(), tool_translator=ToolTranslator())
     result = importer.import_skill(
@@ -332,6 +484,8 @@ def install(query: str, with_scripts: bool, force: bool, url: str, yes_dangerous
             )
         for warning in result.warnings:
             console.print(f"  [yellow]{warning}[/yellow]")
+        if not result.skipped:
+            ReviewStore().put(review, decision="installed")
     else:
         console.print(
             "[red]Install failed: "
@@ -362,6 +516,20 @@ def install(query: str, with_scripts: bool, force: bool, url: str, yes_dangerous
         "capabilities (shell/network-listen/filesystem-write)."
     ),
 )
+@click.option(
+    "--yes",
+    "-y",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    help="Accept 'caution' verdicts without prompting (never skips 'unsafe').",
+)
+@click.option(
+    "--override-unsafe",
+    is_flag=True,
+    default=False,
+    help="Offer UNSAFE skills too (each still requires typing its name).",
+)
 def sync(
     source: str,
     category: str,
@@ -370,6 +538,8 @@ def sync(
     with_scripts: bool,
     force: bool,
     yes_dangerous: bool,
+    assume_yes: bool,
+    override_unsafe: bool,
 ):
     """Bulk install + update from a source (or all configured sources)."""
     console = Console()
@@ -398,11 +568,14 @@ def sync(
         )
         return
 
+    from openjarvis.skills.advisor import ReviewStore, SkillReviewer
     from openjarvis.skills.importer import SkillImporter
     from openjarvis.skills.parser import SkillParser
     from openjarvis.skills.tool_translator import ToolTranslator
 
     importer = SkillImporter(parser=SkillParser(), tool_translator=ToolTranslator())
+    reviewer = SkillReviewer()
+    store = ReviewStore()
 
     total_installed = 0
     for src in source_configs:
@@ -436,6 +609,20 @@ def sync(
 
         installed_count = 0
         for resolved in skills_to_import:
+            already = (importer._target_root / resolved.source / resolved.name).exists()
+            if already and not force:
+                continue
+            review = reviewer.review_resolved(resolved)
+            store.put(review)
+            _print_review(console, review, compact=True)
+            if not _gate_cli(
+                console,
+                review,
+                assume_yes=assume_yes,
+                override_unsafe=override_unsafe,
+                yes_dangerous=yes_dangerous,
+            ):
+                continue
             r = importer.import_skill(
                 resolved,
                 with_scripts=with_scripts,
@@ -444,6 +631,7 @@ def sync(
             )
             if r.success and not r.skipped:
                 installed_count += 1
+                store.put(review, decision="installed")
             elif not r.success and r.requires_confirmation:
                 console.print(
                     f"  [yellow]Skipped {resolved.name}: requests dangerous "

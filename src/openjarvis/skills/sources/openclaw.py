@@ -1,8 +1,13 @@
-"""OpenClawResolver — resolves skills from the OpenClaw skill index.
+"""OpenClawResolver — resolves skills from OpenClaw.
 
-Layout:
-    skills/<owner>/<skill-name>/SKILL.md
+Supported layouts:
+    skills/<skill-name>/SKILL.md            (openclaw/openclaw bundled skills)
+    skills/<owner>/<skill-name>/SKILL.md    (legacy owner/slug index)
     skills/<owner>/<skill-name>/_meta.json  (optional sidecar registry data)
+
+The former ``openclaw/skills`` index repository no longer exists, so the
+default source is the ``skills/`` folder of the main OpenClaw repository,
+fetched with a shallow sparse clone.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from openjarvis.skills.sources.base import ResolvedSkill, SourceResolver
 
 LOGGER = logging.getLogger(__name__)
 
-OPENCLAW_REPO_URL = "https://github.com/openclaw/skills.git"
+OPENCLAW_REPO_URL = "https://github.com/openclaw/openclaw.git"
 
 
 class OpenClawResolver(SourceResolver):
@@ -37,7 +42,7 @@ class OpenClawResolver(SourceResolver):
         return self._cache_root
 
     def sync(self) -> None:
-        self._sync_git_cache(OPENCLAW_REPO_URL)
+        self._sync_git_cache(OPENCLAW_REPO_URL, sparse_paths=["skills"])
 
     def list_skills(self) -> List[ResolvedSkill]:
         skills_root = self._cache_root / "skills"
@@ -49,6 +54,23 @@ class OpenClawResolver(SourceResolver):
 
         for owner_dir in sorted(skills_root.iterdir()):
             if not owner_dir.is_dir():
+                continue
+            flat_md = owner_dir / "SKILL.md"
+            if flat_md.exists():
+                name, description = self._read_preview(
+                    flat_md, default_name=owner_dir.name
+                )
+                results.append(
+                    ResolvedSkill(
+                        name=name,
+                        source=self.name,
+                        path=owner_dir,
+                        category="",
+                        description=description,
+                        commit=commit,
+                        sidecar_data=self._read_sidecar(owner_dir / "_meta.json"),
+                    )
+                )
                 continue
             for skill_dir in sorted(owner_dir.iterdir()):
                 if not skill_dir.is_dir():

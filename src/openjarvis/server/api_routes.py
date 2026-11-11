@@ -566,22 +566,8 @@ async def list_skills(request: Request):
         return {"skills": []}
 
 
-@skills_router.post("")
-async def install_skill(request: Request):
-    """Install a skill (placeholder)."""
-    return {
-        "status": "not_implemented",
-        "message": "Use TOML files in ~/.openjarvis/skills/",
-    }
-
-
-@skills_router.delete("/{skill_name}")
-async def remove_skill(skill_name: str, request: Request):
-    """Remove a skill (placeholder)."""
-    return {
-        "status": "not_implemented",
-        "message": "Skill removal not yet supported via API",
-    }
+# Install / review / remove live in ``server/skills_routes.py`` (skills
+# advisor): every install is reviewed locally and gated before it happens.
 
 
 # ---- Sessions routes ----
@@ -1312,6 +1298,9 @@ def include_all_routes(app) -> None:
     app.include_router(traces_router)
     app.include_router(telemetry_router)
     app.include_router(skills_router)
+    from openjarvis.server.skills_routes import router as skills_advisor_router
+
+    app.include_router(skills_advisor_router)
     app.include_router(sessions_router)
     app.include_router(budget_router)
     app.include_router(metrics_router)

@@ -11,6 +11,7 @@ import { LogsPage } from './pages/LogsPage';
 import { JarvisPage } from './pages/JarvisPage';
 import { UpdatesPage } from './pages/UpdatesPage';
 import { MindPage } from './pages/MindPage';
+import { SkillsPage } from './pages/SkillsPage';
 import { CommandPalette } from './components/CommandPalette';
 import { SetupScreen } from './components/SetupScreen';
 import { Toaster } from './components/ui/sonner';
@@ -206,6 +207,7 @@ export default function App() {
           <Route path="jarvis" element={<JarvisPage />} />
           <Route path="updates" element={<UpdatesPage />} />
           <Route path="mind" element={<MindPage />} />
+          <Route path="skills" element={<SkillsPage />} />
         </Route>
       </Routes>
       <Toaster position="bottom-right" />

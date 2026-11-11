@@ -36,7 +36,7 @@ class HermesResolver(SourceResolver):
         return self._cache_root
 
     def sync(self) -> None:
-        self._sync_git_cache(HERMES_REPO_URL)
+        self._sync_git_cache(HERMES_REPO_URL, sparse_paths=["skills"])
 
     def list_skills(self) -> List[ResolvedSkill]:
         """Walk skills/<category>/<skill>/SKILL.md."""

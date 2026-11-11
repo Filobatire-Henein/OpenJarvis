@@ -327,3 +327,29 @@ class TestGitHubResolver:
         resolver = GitHubResolver(cache_root=tmp_path, repo_url="https://example.com/x")
         skills = resolver.list_skills()
         assert len(skills) == 1
+
+
+def test_openclaw_flat_layout_and_sparse_clone(tmp_path):
+    """openclaw/openclaw ships skills/<name>/SKILL.md; fetch only that folder."""
+    from unittest.mock import patch
+
+    from openjarvis.skills.sources.openclaw import OPENCLAW_REPO_URL, OpenClawResolver
+
+    root = tmp_path / "oc"
+    resolver = OpenClawResolver(root)
+    calls = []
+    with patch("subprocess.run", side_effect=lambda cmd, **kw: calls.append(cmd)):
+        resolver.sync()
+    assert "--sparse" in calls[0] and OPENCLAW_REPO_URL in calls[0]
+    assert calls[1][-3:] == ["sparse-checkout", "set", "skills"]
+
+    (root / "skills" / "weather").mkdir(parents=True)
+    (root / "skills" / "weather" / "SKILL.md").write_text(
+        "---\nname: weather\ndescription: Forecasts\n---\nbody"
+    )
+    (root / "skills" / "owner" / "slug").mkdir(parents=True)
+    (root / "skills" / "owner" / "slug" / "SKILL.md").write_text(
+        "---\nname: slug\ndescription: Legacy\n---\nbody"
+    )
+    found = {(s.category, s.name) for s in resolver.list_skills()}
+    assert found == {("", "weather"), ("owner", "slug")}
