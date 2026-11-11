@@ -175,8 +175,12 @@ def record_voice(
 
 def speak(text: str, console: Any, session: VoiceSession | None = None) -> None:
     """Synthesize and play text, reusing a healthy backend for the session."""
+    from openjarvis.speech._speakable import to_speakable
     from openjarvis.speech.voice_io import play_wav
 
+    text = to_speakable(text)
+    if not text:
+        return
     active_session = session or VoiceSession()
 
     # Resolved before the loop: a bad config value must surface as a config
