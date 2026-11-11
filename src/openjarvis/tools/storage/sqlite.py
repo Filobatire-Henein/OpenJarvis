@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from openjarvis.core.events import EventType, get_event_bus
 from openjarvis.core.registry import MemoryRegistry
+from openjarvis.memory.graph import memory_node_id
 from openjarvis.tools.storage._stubs import (
     MemoryBackend,
     MemoryBackendUnavailable,
@@ -91,6 +92,7 @@ class SQLiteMemory(MemoryBackend):
                 "backend": self.backend_id,
                 "doc_id": doc_id,
                 "source": source,
+                "node_id": memory_node_id("doc", content),
             },
         )
         return doc_id
@@ -107,13 +109,14 @@ class SQLiteMemory(MemoryBackend):
         ]
         doc_ids = self._rust_impl.replace_source(source, payload)
         bus = get_event_bus()
-        for doc_id in doc_ids:
+        for doc_id, (content, _meta) in zip(doc_ids, documents):
             bus.publish(
                 EventType.MEMORY_STORE,
                 {
                     "backend": self.backend_id,
                     "doc_id": doc_id,
                     "source": source,
+                    "node_id": memory_node_id("doc", content),
                 },
             )
         return doc_ids
@@ -141,6 +144,10 @@ class SQLiteMemory(MemoryBackend):
                 "backend": self.backend_id,
                 "query": query,
                 "num_results": len(results),
+                # Content-derived ids so the Mind page can light up the
+                # exact memories this recall used (see memory/graph.py).
+                "node_ids": [memory_node_id("doc", r.content) for r in results],
+                "previews": [r.content[:120] for r in results],
             },
         )
         return results

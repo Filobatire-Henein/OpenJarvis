@@ -965,6 +965,9 @@ class StorageConfig:
     context_top_k: int = 5
     context_min_score: float = 0.0
     context_max_tokens: int = 2048
+    # Max long-term facts injected per prompt, ranked by relevance to the
+    # query (BM25) then recency. 0 = offer every fact (legacy behaviour).
+    context_fact_top_k: int = 8
     chunk_size: int = 512
     chunk_overlap: int = 64
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, List, Optional, Sequence
@@ -23,6 +24,10 @@ class ContextConfig:
     top_k: int = 5
     min_score: float = 0.0
     max_context_tokens: int = 2048
+    # Long-term facts are ranked by BM25 relevance to the query and only the
+    # best ``fact_top_k`` are injected (newest facts fill any unused slots).
+    # ``0`` restores the legacy behaviour of offering every fact, newest first.
+    fact_top_k: int = 8
 
 
 def _count_tokens(text: str) -> int:
@@ -59,6 +64,61 @@ def _trusted_results(
 ) -> List[RetrievalResult]:
     """Return only retrieved documents safe for model-facing recall."""
     return [result for result in results if _result_trusted_for_recall(result)]
+
+
+def rank_facts(query: str, facts: Sequence[Fact], top_k: int = 0) -> List[Fact]:
+    """Order *facts* for recall: most query-relevant first, then newest.
+
+    Relevance is Okapi BM25 over a tiny in-memory index of the fact texts —
+    facts are short and capped (``max_facts``), so this is a few milliseconds
+    even for a full store and needs no extra index on disk.  Facts with no
+    lexical overlap keep their recency order behind the relevant ones, so a
+    vague query ("what do you remember?") still recalls the latest facts.
+
+    ``top_k > 0`` caps the result; ``0`` returns every fact.
+    """
+    from openjarvis.memory.graph import tokenize
+
+    ordered = list(reversed(list(facts)))  # newest first
+    q_terms = set(tokenize(query))
+    scored: List[tuple[float, int]] = []
+    if q_terms and ordered:
+        docs = [tokenize(f.text) for f in ordered]
+        n_docs = len(docs)
+        avg_len = (sum(len(d) for d in docs) / n_docs) or 1.0
+        df: dict[str, int] = {}
+        for d in docs:
+            for term in set(d) & q_terms:
+                df[term] = df.get(term, 0) + 1
+        k1, b = 1.2, 0.75
+        for idx, d in enumerate(docs):
+            score = 0.0
+            for term in q_terms:
+                tf = d.count(term)
+                if not tf:
+                    continue
+                idf = math.log(1 + (n_docs - df[term] + 0.5) / (df[term] + 0.5))
+                score += (
+                    idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * len(d) / avg_len))
+                )
+            if score > 0:
+                scored.append((score, idx))
+    # Stable: equal scores keep recency order.
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    relevant_idx = [idx for _, idx in scored]
+    chosen = set(relevant_idx)
+    result = [ordered[i] for i in relevant_idx]
+    result += [f for i, f in enumerate(ordered) if i not in chosen]
+    return result[:top_k] if top_k > 0 else result
+
+
+def _node_ids(results: Sequence[RetrievalResult], facts: Sequence[Fact]) -> List[str]:
+    """Content-derived ids of recalled memories (matches the Mind graph)."""
+    from openjarvis.memory.graph import memory_node_id
+
+    ids = [memory_node_id("fact", f.text) for f in facts]
+    ids += [memory_node_id("doc", r.content) for r in results]
+    return ids
 
 
 def format_context(results: List[RetrievalResult]) -> str:
@@ -185,13 +245,14 @@ def inject_context(
 
     # When both sources have data, cap facts at half the total budget so they
     # cannot starve query-specific document retrieval. Unused fact budget is
-    # still available to documents. Newest facts win within the fact budget.
+    # still available to documents. The most relevant facts (then the newest)
+    # win within the fact budget; see rank_facts().
     fact_budget = cfg.max_context_tokens
     if results:
         fact_budget //= 2
     selected_facts: List[Fact] = []
     total_tokens = 0
-    for fact in reversed(_trusted_facts(facts)):
+    for fact in rank_facts(query, _trusted_facts(facts), cfg.fact_top_k):
         tokens = _count_tokens(fact.text)
         if total_tokens + tokens > fact_budget:
             continue
@@ -229,6 +290,9 @@ def inject_context(
             "num_results": len(truncated),
             "num_facts": len(selected_facts),
             "total_tokens": total_tokens,
+            "node_ids": _node_ids(truncated, selected_facts),
+            "previews": [f.text[:120] for f in selected_facts]
+            + [r.content[:120] for r in truncated],
         },
     )
 
@@ -242,4 +306,5 @@ __all__ = [
     "build_context_message",
     "format_context",
     "inject_context",
+    "rank_facts",
 ]

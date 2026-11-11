@@ -711,6 +711,7 @@ class AgentExecutor:
                     top_k=sys_cfg.memory.context_top_k,
                     min_score=sys_cfg.memory.context_min_score,
                     max_context_tokens=sys_cfg.memory.context_max_tokens,
+                    fact_top_k=getattr(sys_cfg.memory, "context_fact_top_k", 8),
                 )
                 # Use pending user messages as query, fall back to instruction
                 query = ""
