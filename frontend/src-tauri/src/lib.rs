@@ -10,10 +10,10 @@ const OLLAMA_PORT: u16 = 11434;
 const JARVIS_PORT: u16 = 8000;
 #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
 const DESKTOP_UV_SYNC_COMMAND: &str =
-    "uv sync --extra desktop --extra inference-cloud --extra inference-google --group desktop-native";
+    "uv sync --inexact --extra voice --extra desktop --extra inference-cloud --extra inference-google --group desktop-native";
 #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
 const DESKTOP_UV_SYNC_COMMAND: &str =
-    "uv sync --python cpython-3.12-windows-x86_64-none --extra desktop --extra inference-cloud --extra inference-google --group desktop-native";
+    "uv sync --inexact --python cpython-3.12-windows-x86_64-none --extra voice --extra desktop --extra inference-cloud --extra inference-google --group desktop-native";
 
 /// Small, fast model used when startup needs a default Ollama tag.
 const STARTUP_MODEL: &str = "qwen3.5:4b";
@@ -287,6 +287,11 @@ fn resolve_bin(name: &str) -> String {
 /// Find the OpenJarvis project root (contains pyproject.toml).
 /// Checks OPENJARVIS_ROOT env var, the checkout beside the executable,
 /// then walks up from the executable before probing common clone locations.
+/// The Filo fork's repository. First-launch downloads and the "clone
+/// manually" hint must point here, never at upstream, or the app would
+/// silently run unmodified upstream code.
+const FORK_REPO_URL: &str = "https://github.com/Filobatire-Henein/OpenJarvis.git";
+
 fn find_project_root() -> Option<std::path::PathBuf> {
     // 1. Explicit env var override
     if let Ok(root) = std::env::var("OPENJARVIS_ROOT") {
@@ -307,6 +312,9 @@ fn find_project_root() -> Option<std::path::PathBuf> {
     // 3. Fallback: well-known direct paths
     let home = home_dir();
     let direct = [
+        // Filo fork: the CLI installer's checkout (install.sh puts the
+        // backend here). Prefer it so the app and `jarvis` share one install.
+        format!("{home}/.openjarvis/src"),
         format!("{home}/OpenJarvis"),
         format!("{home}/projects/hazy/OpenJarvis"),
         format!("{home}/projects/OpenJarvis"),
@@ -1321,7 +1329,7 @@ async fn boot_backend(backend: SharedBackend, status: SharedStatus) {
                 "clone",
                 "--depth",
                 "1",
-                "https://github.com/open-jarvis/OpenJarvis.git",
+                FORK_REPO_URL,
                 &clone_target,
             ])
             .stdout(std::process::Stdio::null())
@@ -1339,8 +1347,9 @@ async fn boot_backend(backend: SharedBackend, status: SharedStatus) {
                     let mut s = status.lock().await;
                     s.error = Some(format!(
                         "Failed to download OpenJarvis: {}. \
-                         Clone manually: git clone https://github.com/open-jarvis/OpenJarvis.git {}",
+                         Clone manually: git clone {} {}",
                         stderr.trim(),
+                        FORK_REPO_URL,
                         clone_target,
                     ));
                     return;
@@ -1349,8 +1358,8 @@ async fn boot_backend(backend: SharedBackend, status: SharedStatus) {
                     let mut s = status.lock().await;
                     s.error = Some(format!(
                         "Failed to download OpenJarvis: {}. \
-                         Clone manually: git clone https://github.com/open-jarvis/OpenJarvis.git {}",
-                        e, clone_target,
+                         Clone manually: git clone {} {}",
+                        e, FORK_REPO_URL, clone_target,
                     ));
                     return;
                 }
@@ -1529,6 +1538,12 @@ async fn boot_backend(backend: SharedBackend, status: SharedStatus) {
     sync_cmd
         .args([
             "sync",
+            // Filo fork: never uninstall packages the user added on top of the
+            // lockfile (e.g. Kokoro voice, dev tools) -- plain `uv sync` is exact
+            // and silently removes anything not in uv.lock on every launch.
+            "--inexact",
+            "--extra",
+            "voice",
             "--extra",
             "desktop",
             "--extra",
