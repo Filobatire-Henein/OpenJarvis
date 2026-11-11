@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { PRIVATE_FORK } from '../../lib/fork';
 
 type UpdateState = 'idle' | 'available' | 'downloading' | 'ready' | 'error';
 
@@ -6,6 +7,10 @@ const CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 const DISABLED_KEY = 'oj-auto-update-disabled';
 
 export function isAutoUpdateDisabled(): boolean {
+  // Filo fork: the bundled updater points at upstream releases, so installing
+  // one would silently replace the fork. Fork updates go through the Updates
+  // tab instead -- never through this auto-updater.
+  if (PRIVATE_FORK) return true;
   try {
     return localStorage.getItem(DISABLED_KEY) === '1';
   } catch {
